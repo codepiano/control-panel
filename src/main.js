@@ -559,50 +559,107 @@ function iconDataUrl() {
 }
 
 function buildTrayMenu(projects) {
-  const projectSections = projects.flatMap((project) => [
-    { type: 'separator' },
-    { label: `${project.name}  (${project.status || 'stopped'})`, enabled: false },
-    {
-      label: 'Start',
-      click: () => startProject(project.key),
-    },
-    {
-      label: 'Stop',
-      click: () => stopProject(project.key),
-    },
-    {
-      label: 'Restart',
-      click: () => restartProject(project.key),
-    },
-    {
-      label: 'Open Folder',
-      click: () => shell.openPath(project.workingDirectory),
-    },
-  ]);
+  const statusOrder = { running: 0, starting: 1, error: 2, stopping: 3, stopped: 4 };
+  const statusBadge = {
+    running: '●',
+    starting: '◐',
+    stopping: '◑',
+    error: '!',
+    stopped: '○',
+  };
+  const orderedProjects = [...projects].sort((a, b) => {
+    const statusGap = (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99);
+    if (statusGap !== 0) {
+      return statusGap;
+    }
+
+    return a.name.localeCompare(b.name, 'zh-Hans-CN');
+  });
+  const runningCount = orderedProjects.filter((project) => project.status === 'running').length;
+  const projectItems = orderedProjects.map((project) => ({
+    label: `${statusBadge[project.status] || '○'} ${project.name}`,
+    submenu: [
+      { label: `状态: ${project.status || 'stopped'}`, enabled: false },
+      ...(project.notes ? [{ label: project.notes, enabled: false }] : []),
+      { type: 'separator' },
+      {
+        label: '启动',
+        enabled: !(project.status === 'running' || project.status === 'starting'),
+        click: () => startProject(project.key),
+      },
+      {
+        label: '停止',
+        enabled: !(project.status === 'stopped' || project.status === 'stopping'),
+        click: () => stopProject(project.key),
+      },
+      {
+        label: '重启',
+        enabled: !(project.status === 'starting' || project.status === 'stopping'),
+        click: () => restartProject(project.key),
+      },
+      { type: 'separator' },
+      {
+        label: '打开主页',
+        enabled: Boolean(project.homepageUrl || project.openHomepageCommand || project.projectDir),
+        click: () => openProjectHomepage(project.key),
+      },
+      {
+        label: '打开仓库',
+        enabled: Boolean(project.repositoryUrl || project.projectDir),
+        click: () => openProjectRepository(project.key),
+      },
+      {
+        label: '打开目录',
+        enabled: Boolean(project.projectDir || project.workingDirectory),
+        click: () => shell.openPath(project.projectDir || project.workingDirectory),
+      },
+    ],
+  }));
 
   return Menu.buildFromTemplate([
-    { label: APP_NAME, enabled: false },
+    { label: `${APP_NAME}  ${runningCount}/${orderedProjects.length}`, enabled: false },
     { type: 'separator' },
-    ...projectSections,
-    ...(projects.length ? [{ type: 'separator' }] : []),
     {
-      label: 'Open Dashboard',
+      label: '打开面板',
       click: showWindow,
     },
     {
-      label: 'Refresh',
+      label: '刷新状态',
       click: () => refreshAll().catch(() => {}),
     },
     {
-      label: 'Open Config File',
+      label: '只看运行中',
+      enabled: runningCount > 0,
+      submenu:
+        runningCount > 0
+          ? orderedProjects
+              .filter((project) => project.status === 'running')
+              .map((project) => ({
+                label: project.name,
+                click: () => showWindow(),
+              }))
+          : [{ label: '当前没有运行中的项目', enabled: false }],
+    },
+    ...(projectItems.length
+      ? [
+          { type: 'separator' },
+          {
+            label: `项目 (${projectItems.length})`,
+            submenu: projectItems,
+          },
+        ]
+      : []),
+    { type: 'separator' },
+    {
+      label: '打开配置文件',
       click: () => shell.openPath(getConfigPath()),
     },
     {
-      label: 'Open Config Folder',
+      label: '打开配置目录',
       click: () => shell.openPath(path.dirname(getConfigPath())),
     },
     {
-      label: 'Add Project Root',
+      label: '添加项目根目录',
       click: async () => {
         const selected = await pickProjectRoots();
         if (selected.length > 0) {
@@ -617,7 +674,7 @@ function buildTrayMenu(projects) {
     },
     { type: 'separator' },
     {
-      label: 'Quit',
+      label: '退出',
       click: () => app.quit(),
     },
   ]);
