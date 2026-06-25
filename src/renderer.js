@@ -113,6 +113,7 @@ function renderProject(project) {
   const pathNode = fragment.querySelector('.project-path');
   const notes = fragment.querySelector('.project-notes');
   const details = fragment.querySelector('.project-details');
+  const detailToggle = fragment.querySelector('.detail-toggle');
   const status = fragment.querySelector('.status-pill');
   const pid = fragment.querySelector('.project-pid');
   const source = fragment.querySelector('.project-source');
@@ -133,14 +134,24 @@ function renderProject(project) {
   notes.textContent = '';
   pathNode.hidden = !outputText;
   notes.hidden = true;
-  status.textContent = statusLabel(project.status);
+  status.textContent = '';
   status.dataset.status = project.status;
+  status.title = statusLabel(project.status);
+  status.setAttribute('aria-label', statusLabel(project.status));
   pid.textContent = project.pid ? String(project.pid) : '-';
   source.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '来源：手动配置';
   root.textContent = project.root || '未配置';
   dir.textContent = project.projectDir || project.workingDirectory || '未配置';
   output.textContent = outputText || '-';
   details.hidden = !project.pid && !outputText && !project.root && !(project.projectDir || project.workingDirectory);
+  detailToggle.hidden = details.hidden;
+
+  detailToggle.addEventListener('click', () => {
+    const expanded = !details.classList.contains('hidden');
+    details.classList.toggle('hidden', expanded);
+    detailToggle.textContent = expanded ? '详情' : '收起';
+    detailToggle.classList.toggle('is-active', !expanded);
+  });
 
   startBtn.disabled = project.status === 'running' || project.status === 'starting';
   stopBtn.disabled = project.status === 'stopped' || project.status === 'stopping';

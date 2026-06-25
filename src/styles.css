@@ -276,6 +276,13 @@ button:disabled {
   gap: 8px;
 }
 
+.card-top-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .project-headline {
   min-width: 0;
 }
@@ -324,28 +331,23 @@ button:disabled {
 }
 
 .status-pill[data-status="running"] {
-  background: rgba(124, 219, 141, 0.14);
-  color: var(--accent);
-  border: 1px solid rgba(124, 219, 141, 0.24);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(124, 219, 141, 0.16);
 }
 
 .status-pill[data-status="stopped"] {
-  background: rgba(148, 163, 184, 0.12);
-  color: #dbe2f2;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(148, 163, 184, 0.7);
 }
 
 .status-pill[data-status="starting"],
 .status-pill[data-status="stopping"] {
-  background: rgba(245, 158, 11, 0.14);
-  color: #fde68a;
-  border: 1px solid rgba(245, 158, 11, 0.24);
+  background: var(--warn);
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.14);
 }
 
 .status-pill[data-status="error"] {
-  background: rgba(239, 68, 68, 0.14);
-  color: #fca5a5;
-  border: 1px solid rgba(239, 68, 68, 0.24);
+  background: var(--error);
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.14);
 }
 
 .card-meta {
@@ -361,28 +363,19 @@ button:disabled {
   padding-top: 6px;
 }
 
-.project-details summary {
-  list-style: none;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 11px;
-  user-select: none;
+.detail-toggle {
+  padding: 3px 7px;
+  font-size: 10px;
+  border-radius: 999px;
 }
 
-.project-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.project-details summary::after {
-  content: "展开";
-}
-
-.project-details[open] summary::after {
-  content: "收起";
-}
-
-.project-details .card-meta {
-  margin-top: 8px;
+.status-pill {
+  width: 10px;
+  height: 10px;
+  min-width: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
 }
 
 .card-actions {

@@ -116,11 +116,13 @@
             <h3 class="project-name"></h3>
             <p class="project-path"></p>
           </div>
-          <div class="status-pill"></div>
+          <div class="card-top-tools">
+            <button class="detail-toggle ghost" type="button">详情</button>
+            <div class="status-pill" aria-hidden="true"></div>
+          </div>
         </div>
         <p class="project-notes"></p>
-        <details class="project-details">
-          <summary>详情</summary>
+        <div class="project-details hidden">
           <div class="card-meta">
             <div class="meta-field">
               <span class="label">进程 ID</span>
@@ -143,7 +145,7 @@
               <span class="project-output value"></span>
             </div>
           </div>
-        </details>
+        </div>
         <div class="card-actions">
           <button class="start-btn">启动</button>
           <button class="stop-btn ghost">停止</button>
