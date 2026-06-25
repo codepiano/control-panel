@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Control Panel</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="hero">
+        <div class="badge">macOS 菜单栏中控</div>
+        <h1>把所有项目放进一个窗口里管。</h1>
+        <p>
+          这个面板会常驻系统工具栏，统一展示项目状态，支持一键启动、停止、重启，并从本地配置文件加载你的项目清单。
+        </p>
+        <div class="hero-actions">
+          <button id="refreshBtn" class="primary">刷新状态</button>
+          <button id="configBtn" class="secondary">管理目录</button>
+          <button id="configFileBtn" class="secondary">打开配置文件</button>
+        </div>
+        <label class="toggle-row">
+          <span>
+            <strong>开机自启</strong>
+            <small>登录后自动打开这个控制面板</small>
+          </span>
+          <input id="loginToggle" type="checkbox" />
+        </label>
+        <div class="meta">
+          <div>
+            <span class="label">扫描目录</span>
+            <span id="rootsCount" class="value">-</span>
+          </div>
+          <div>
+            <span class="label">配置文件</span>
+            <span id="configPath" class="value">-</span>
+          </div>
+          <div>
+            <span class="label">最近刷新</span>
+            <span id="updatedAt" class="value">-</span>
+          </div>
+          <div>
+            <span class="label">状态文件</span>
+            <span id="statePath" class="value">-</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="content">
+        <div class="content-header">
+          <div>
+            <h2>项目列表</h2>
+            <p id="summary">正在加载项目状态。</p>
+          </div>
+          <div class="chip" id="runningSummary">0 running</div>
+        </div>
+        <div id="projectList" class="grid"></div>
+      </main>
+    </div>
+
+    <div id="settingsModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <h2>扫描目录</h2>
+            <p>把项目根目录加进来，目录里符合规范的项目会自动出现。</p>
+          </div>
+          <button id="closeSettingsBtn" class="secondary">关闭</button>
+        </div>
+
+        <section class="panel">
+          <div class="field-row">
+            <input id="rootInput" type="text" placeholder="/Users/codepiano/Documents/projects" />
+            <button id="browseRootBtn" class="secondary">选择目录</button>
+            <button id="addRootBtn">添加</button>
+          </div>
+          <div id="rootList" class="root-list"></div>
+        </section>
+
+        <section class="panel spec">
+          <h3>项目规范</h3>
+          <pre>project-root/
+  control-panel.json
+  scripts/
+    start.sh
+    stop.sh
+    status.sh</pre>
+          <p>
+            `control-panel.json` 支持字段：`name`、`id`、`workingDirectory`、`startCommand`、`stopCommand`、
+            `statusCommand`、`notes`。也可以写成 `scripts.start`、`scripts.stop`、`scripts.status`。
+          </p>
+          <p>
+            只要目录被加入扫描列表，面板就会递归找到其中的 `control-panel.json`，自动纳入控制。
+          </p>
+        </section>
+      </div>
+    </div>
+
+    <template id="projectTemplate">
+      <section class="card">
+        <div class="card-top">
+          <div>
+            <h3 class="project-name"></h3>
+            <p class="project-path"></p>
+          </div>
+          <div class="status-pill"></div>
+        </div>
+        <p class="project-notes"></p>
+        <div class="card-meta">
+          <span class="project-pid"></span>
+          <span class="project-output"></span>
+        </div>
+        <div class="card-actions">
+          <button class="start-btn">启动</button>
+          <button class="stop-btn ghost">停止</button>
+          <button class="restart-btn ghost">重启</button>
+          <button class="folder-btn ghost">目录</button>
+        </div>
+      </section>
+    </template>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

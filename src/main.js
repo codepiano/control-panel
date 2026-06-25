@@ -1,0 +1,793 @@
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, dialog } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const { exec, spawn } = require('child_process');
+
+const APP_NAME = 'Control Panel';
+const CONFIG_ENV = 'CONTROL_PANEL_CONFIG';
+const DEFAULT_REFRESH_MS = 5000;
+const DEFAULT_SCAN_DEPTH = 4;
+const DEFAULT_MANIFEST_NAME = 'control-panel.json';
+const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
+
+let tray = null;
+let windowRef = null;
+let refreshTimer = null;
+let projectsCache = [];
+let projectState = {};
+let trayMenuBuiltAt = 0;
+let refreshInFlight = null;
+let lastRefreshAt = null;
+let currentConfig = defaultConfig();
+
+function defaultConfig() {
+  return {
+    roots: [],
+    scan: {
+      manifestName: DEFAULT_MANIFEST_NAME,
+      maxDepth: DEFAULT_SCAN_DEPTH,
+    },
+    projects: [],
+  };
+}
+
+function getConfigPath() {
+  if (process.env[CONFIG_ENV]) {
+    return path.resolve(process.env[CONFIG_ENV]);
+  }
+
+  return path.join(app.getPath('userData'), 'projects.json');
+}
+
+function getStatePath() {
+  return path.join(app.getPath('userData'), 'state.json');
+}
+
+function normalizeList(values) {
+  return [...new Set((values || []).map((value) => String(value).trim()).filter(Boolean))];
+}
+
+function normalizeConfig(config) {
+  const base = { ...defaultConfig(), ...(config || {}) };
+  const scan = base.scan && typeof base.scan === 'object' ? base.scan : {};
+  return {
+    roots: normalizeList(base.roots),
+    scan: {
+      manifestName: String(scan.manifestName || DEFAULT_MANIFEST_NAME).trim() || DEFAULT_MANIFEST_NAME,
+      maxDepth: Math.max(0, Number.isFinite(Number(scan.maxDepth)) ? Number(scan.maxDepth) : DEFAULT_SCAN_DEPTH),
+    },
+    projects: Array.isArray(base.projects) ? base.projects : [],
+  };
+}
+
+function readJson(filePath, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function writeJson(filePath, value) {
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+}
+
+function ensureUserFiles() {
+  const userDataDir = app.getPath('userData');
+  fs.mkdirSync(userDataDir, { recursive: true });
+
+  const configPath = getConfigPath();
+  if (!fs.existsSync(configPath)) {
+    const examplePath = path.join(app.getAppPath(), 'config', 'projects.example.json');
+    if (fs.existsSync(examplePath)) {
+      fs.copyFileSync(examplePath, configPath);
+    } else {
+      writeJson(configPath, defaultConfig());
+    }
+  }
+
+  const statePath = getStatePath();
+  if (!fs.existsSync(statePath)) {
+    writeJson(statePath, { projects: {} });
+  }
+}
+
+function loadConfig() {
+  currentConfig = normalizeConfig(readJson(getConfigPath(), defaultConfig()));
+  return currentConfig;
+}
+
+function saveConfig(config) {
+  currentConfig = normalizeConfig(config);
+  writeJson(getConfigPath(), currentConfig);
+  return currentConfig;
+}
+
+function loadState() {
+  const data = readJson(getStatePath(), { projects: {} });
+  projectState = data.projects && typeof data.projects === 'object' ? data.projects : {};
+}
+
+function persistState() {
+  writeJson(getStatePath(), { projects: projectState });
+}
+
+function normalizeCommandResult(result) {
+  return {
+    code: typeof result.code === 'number' ? result.code : 1,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+  };
+}
+
+function execCommand(command, cwd) {
+  return new Promise((resolve) => {
+    if (!command) {
+      resolve(normalizeCommandResult({ code: 0, stdout: '', stderr: '' }));
+      return;
+    }
+
+    exec(command, { cwd, shell: '/bin/zsh', env: process.env }, (error, stdout, stderr) => {
+      resolve(
+        normalizeCommandResult({
+          code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+          stdout,
+          stderr,
+        })
+      );
+    });
+  });
+}
+
+function isPidAlive(pid) {
+  if (!pid) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function launchDetached(command, cwd) {
+  return new Promise((resolve, reject) => {
+    if (!command) {
+      reject(new Error('Missing start command'));
+      return;
+    }
+
+    const child = spawn('/bin/zsh', ['-lc', command], {
+      cwd,
+      detached: true,
+      stdio: 'ignore',
+      env: process.env,
+    });
+
+    child.once('error', reject);
+    child.unref();
+    resolve(child.pid);
+  });
+}
+
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'project';
+}
+
+function resolveWorkingDirectory(manifestDir, workingDirectory) {
+  const input = String(workingDirectory || '.').trim();
+  if (path.isAbsolute(input)) {
+    return input;
+  }
+
+  return path.resolve(manifestDir, input);
+}
+
+function resolveScriptFallback(manifestDir, scriptName) {
+  const shellScript = path.join(manifestDir, 'scripts', `${scriptName}.sh`);
+  const zshScript = path.join(manifestDir, 'scripts', `${scriptName}.zsh`);
+  const jsScript = path.join(manifestDir, 'scripts', `${scriptName}.js`);
+
+  if (fs.existsSync(shellScript)) {
+    return `./scripts/${scriptName}.sh`;
+  }
+
+  if (fs.existsSync(zshScript)) {
+    return `./scripts/${scriptName}.zsh`;
+  }
+
+  if (fs.existsSync(jsScript)) {
+    return `./scripts/${scriptName}.js`;
+  }
+
+  return '';
+}
+
+function parseManifest(manifestPath) {
+  try {
+    return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch (error) {
+    return null;
+  }
+}
+
+function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto') {
+  const projectDir = path.dirname(manifestPath);
+  const scripts = manifest && typeof manifest.scripts === 'object' && manifest.scripts ? manifest.scripts : {};
+  const workingDirectory = resolveWorkingDirectory(projectDir, manifest.workingDirectory || '.');
+  const name = String(manifest.name || path.basename(projectDir)).trim() || path.basename(projectDir);
+  const id = String(manifest.id || slugify(name)).trim() || slugify(projectDir);
+  const startCommand = String(
+    manifest.startCommand || manifest.start || scripts.start || resolveScriptFallback(projectDir, 'start') || ''
+  );
+  const stopCommand = String(
+    manifest.stopCommand || manifest.stop || scripts.stop || resolveScriptFallback(projectDir, 'stop') || ''
+  );
+  const statusCommand = String(
+    manifest.statusCommand || manifest.status || scripts.status || resolveScriptFallback(projectDir, 'status') || ''
+  );
+
+  return {
+    key: `manifest:${manifestPath}`,
+    id,
+    name,
+    workingDirectory,
+    startCommand,
+    stopCommand,
+    statusCommand,
+    notes: String(manifest.notes || ''),
+    source,
+    root,
+    manifestPath,
+    projectDir,
+  };
+}
+
+function buildProjectFromLegacyEntry(entry) {
+  const workingDirectory = String(entry.workingDirectory || '').trim();
+  const name = String(entry.name || path.basename(workingDirectory || entry.id || 'project')).trim();
+  return {
+    key: `legacy:${workingDirectory}:${entry.id || slugify(name)}`,
+    id: String(entry.id || slugify(name)),
+    name,
+    workingDirectory,
+    startCommand: String(entry.startCommand || ''),
+    stopCommand: String(entry.stopCommand || ''),
+    statusCommand: String(entry.statusCommand || ''),
+    notes: String(entry.notes || ''),
+    source: 'legacy',
+    root: workingDirectory,
+    manifestPath: '',
+    projectDir: workingDirectory,
+  };
+}
+
+function findProjectManifests(root, manifestName, maxDepth) {
+  const results = [];
+  const rootPath = path.resolve(root);
+
+  if (!fs.existsSync(rootPath)) {
+    return results;
+  }
+
+  function walk(currentDir, depth) {
+    if (depth > maxDepth) {
+      return;
+    }
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch (error) {
+      return;
+    }
+
+    const manifestPath = path.join(currentDir, manifestName);
+    if (fs.existsSync(manifestPath) && fs.statSync(manifestPath).isFile()) {
+      results.push(manifestPath);
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) {
+        continue;
+      }
+
+      walk(path.join(currentDir, entry.name), depth + 1);
+    }
+  }
+
+  walk(rootPath, 0);
+  return results;
+}
+
+function discoverProjects(config) {
+  const discovered = [];
+  const seenKeys = new Set();
+  const roots = normalizeList(config.roots);
+  const manifestName = config.scan.manifestName || DEFAULT_MANIFEST_NAME;
+  const maxDepth = Number.isFinite(Number(config.scan.maxDepth)) ? Number(config.scan.maxDepth) : DEFAULT_SCAN_DEPTH;
+
+  for (const root of roots) {
+    for (const manifestPath of findProjectManifests(root, manifestName, maxDepth)) {
+      const manifest = parseManifest(manifestPath);
+      if (!manifest) {
+        continue;
+      }
+
+      const project = buildProjectFromManifest(manifestPath, manifest, root, 'auto');
+      if (seenKeys.has(project.key)) {
+        continue;
+      }
+
+      seenKeys.add(project.key);
+      discovered.push(project);
+    }
+  }
+
+  const legacyProjects = Array.isArray(config.projects) ? config.projects : [];
+  for (const entry of legacyProjects) {
+    if (!entry || !entry.id || !entry.name || !entry.workingDirectory) {
+      continue;
+    }
+
+    const project = buildProjectFromLegacyEntry(entry);
+    if (seenKeys.has(project.key)) {
+      continue;
+    }
+
+    seenKeys.add(project.key);
+    discovered.push(project);
+  }
+
+  discovered.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  return discovered;
+}
+
+async function getProjectStatus(project) {
+  const state = projectState[project.key] || {};
+
+  if (project.statusCommand) {
+    const result = await execCommand(project.statusCommand, project.workingDirectory);
+    return {
+      status: result.code === 0 ? 'running' : 'stopped',
+      pid: state.pid || null,
+      details: result.stdout.trim() || result.stderr.trim() || '',
+    };
+  }
+
+  if (state.pid && isPidAlive(state.pid)) {
+    return {
+      status: 'running',
+      pid: state.pid,
+      details: state.lastOutput || '',
+    };
+  }
+
+  return {
+    status: 'stopped',
+    pid: state.pid || null,
+    details: state.lastOutput || '',
+  };
+}
+
+async function collectProjectsSnapshot() {
+  const config = loadConfig();
+  const discovered = discoverProjects(config);
+  const snapshot = [];
+
+  for (const project of discovered) {
+    const status = await getProjectStatus(project);
+    snapshot.push({
+      ...project,
+      ...status,
+    });
+  }
+
+  projectsCache = snapshot;
+  return {
+    config,
+    projects: snapshot,
+  };
+}
+
+function iconDataUrl() {
+  const svg = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="28" fill="#111827"/>
+      <path d="M28 40h72v12H28zM28 58h72v12H28zM28 76h48v12H28z" fill="#f9fafb"/>
+      <circle cx="92" cy="82" r="12" fill="#22c55e"/>
+    </svg>`
+  ).toString('base64');
+  return `data:image/svg+xml;base64,${svg}`;
+}
+
+function buildTrayMenu(projects) {
+  const projectSections = projects.flatMap((project) => [
+    { type: 'separator' },
+    { label: `${project.name}  (${project.status || 'stopped'})`, enabled: false },
+    {
+      label: 'Start',
+      click: () => startProject(project.key),
+    },
+    {
+      label: 'Stop',
+      click: () => stopProject(project.key),
+    },
+    {
+      label: 'Restart',
+      click: () => restartProject(project.key),
+    },
+    {
+      label: 'Open Folder',
+      click: () => shell.openPath(project.workingDirectory),
+    },
+  ]);
+
+  return Menu.buildFromTemplate([
+    { label: APP_NAME, enabled: false },
+    { type: 'separator' },
+    ...projectSections,
+    ...(projects.length ? [{ type: 'separator' }] : []),
+    {
+      label: 'Open Dashboard',
+      click: showWindow,
+    },
+    {
+      label: 'Refresh',
+      click: () => refreshAll().catch(() => {}),
+    },
+    {
+      label: 'Open Config File',
+      click: () => shell.openPath(getConfigPath()),
+    },
+    {
+      label: 'Open Config Folder',
+      click: () => shell.openPath(path.dirname(getConfigPath())),
+    },
+    {
+      label: 'Add Project Root',
+      click: async () => {
+        const selected = await pickProjectRoots();
+        if (selected.length > 0) {
+          const config = loadConfig();
+          saveConfig({
+            ...config,
+            roots: normalizeList([...config.roots, ...selected]),
+          });
+          await refreshAll();
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => app.quit(),
+    },
+  ]);
+}
+
+async function refreshAll() {
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+
+  refreshInFlight = (async () => {
+    const { config, projects } = await collectProjectsSnapshot();
+    const payload = {
+      config,
+      projects,
+      configPath: getConfigPath(),
+      statePath: getStatePath(),
+      updatedAt: new Date().toISOString(),
+      trayUpdatedAt: trayMenuBuiltAt,
+      openAtLogin: app.getLoginItemSettings ? app.getLoginItemSettings().openAtLogin : false,
+    };
+
+    if (windowRef && !windowRef.isDestroyed()) {
+      windowRef.webContents.send('projects-updated', payload);
+    }
+
+    if (tray) {
+      tray.setContextMenu(buildTrayMenu(projects));
+      tray.setToolTip(
+        `${APP_NAME} - ${projects.filter((project) => project.status === 'running').length}/${projects.length} running`
+      );
+      trayMenuBuiltAt = Date.now();
+    }
+
+    lastRefreshAt = payload.updatedAt;
+    return payload;
+  })();
+
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
+}
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1100,
+    height: 780,
+    minWidth: 920,
+    minHeight: 640,
+    show: false,
+    title: APP_NAME,
+    backgroundColor: '#0b1220',
+    titleBarStyle: 'hiddenInset',
+    webPreferences: {
+      preload: path.join(app.getAppPath(), 'src', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  win.loadFile(path.join(app.getAppPath(), 'src', 'index.html'));
+
+  win.webContents.once('did-finish-load', () => {
+    win.webContents.send('app-ready', {
+      configPath: getConfigPath(),
+      projectCount: projectsCache.length,
+      config: currentConfig,
+    });
+  });
+
+  win.on('blur', () => {
+    if (process.platform === 'darwin') {
+      win.hide();
+    }
+  });
+
+  return win;
+}
+
+function showWindow() {
+  if (!windowRef) {
+    windowRef = createWindow();
+  }
+
+  windowRef.show();
+  windowRef.focus();
+  refreshAll().catch(() => {});
+}
+
+function findProjectByKey(projectKey) {
+  return projectsCache.find((item) => item.key === projectKey);
+}
+
+async function startProject(projectKey) {
+  const project = findProjectByKey(projectKey);
+  if (!project) {
+    return;
+  }
+
+  projectState[project.key] = {
+    ...(projectState[project.key] || {}),
+    status: 'starting',
+    lastOutput: 'Starting',
+  };
+  persistState();
+  await refreshAll();
+
+  try {
+    const pid = await launchDetached(project.startCommand, project.workingDirectory);
+    projectState[project.key] = {
+      pid,
+      status: 'running',
+      lastOutput: `Started at ${new Date().toLocaleString()}`,
+    };
+    persistState();
+  } catch (error) {
+    projectState[project.key] = {
+      ...(projectState[project.key] || {}),
+      status: 'error',
+      lastOutput: String(error.message || error),
+    };
+    persistState();
+  }
+
+  await refreshAll();
+}
+
+async function stopProject(projectKey) {
+  const project = findProjectByKey(projectKey);
+  if (!project) {
+    return;
+  }
+
+  projectState[project.key] = {
+    ...(projectState[project.key] || {}),
+    status: 'stopping',
+    lastOutput: 'Stopping',
+  };
+  persistState();
+  await refreshAll();
+
+  try {
+    if (project.stopCommand) {
+      const result = await execCommand(project.stopCommand, project.workingDirectory);
+      projectState[project.key] = {
+        ...(projectState[project.key] || {}),
+        status: result.code === 0 ? 'stopped' : 'error',
+        lastOutput: result.stdout.trim() || result.stderr.trim() || `Stop exited with ${result.code}`,
+      };
+    } else {
+      const currentPid = projectState[project.key]?.pid;
+      if (currentPid && isPidAlive(currentPid)) {
+        try {
+          process.kill(-currentPid, 'SIGTERM');
+        } catch (error) {
+          try {
+            process.kill(currentPid, 'SIGTERM');
+          } catch (killError) {
+            // Ignore and continue to a forced shutdown check.
+          }
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 800));
+
+      if (currentPid && isPidAlive(currentPid)) {
+        try {
+          process.kill(currentPid, 'SIGKILL');
+        } catch (error) {
+          // Ignore.
+        }
+      }
+
+      projectState[project.key] = {
+        ...(projectState[project.key] || {}),
+        status: 'stopped',
+        lastOutput: `Stopped at ${new Date().toLocaleString()}`,
+      };
+    }
+
+    persistState();
+  } catch (error) {
+    projectState[project.key] = {
+      ...(projectState[project.key] || {}),
+      status: 'error',
+      lastOutput: String(error.message || error),
+    };
+    persistState();
+  }
+
+  await refreshAll();
+}
+
+async function restartProject(projectKey) {
+  await stopProject(projectKey);
+  await startProject(projectKey);
+}
+
+async function toggleAutoLaunch(enable) {
+  if (!app.setLoginItemSettings) {
+    return false;
+  }
+
+  app.setLoginItemSettings({
+    openAtLogin: enable,
+    path: app.getPath('exe'),
+    args: ['--hidden'],
+  });
+
+  return true;
+}
+
+async function pickProjectRoots() {
+  const result = await dialog.showOpenDialog({
+    title: '选择项目根目录',
+    properties: ['openDirectory', 'multiSelections', 'createDirectory'],
+  });
+
+  if (result.canceled) {
+    return [];
+  }
+
+  return normalizeList(result.filePaths);
+}
+
+function registerIpc() {
+  ipcMain.handle('get-dashboard-data', async () => {
+    const payload = await refreshAll();
+    return payload;
+  });
+
+  ipcMain.handle('refresh-projects', async () => {
+    await refreshAll();
+    return true;
+  });
+
+  ipcMain.handle('start-project', async (_event, projectKey) => {
+    await startProject(projectKey);
+    return true;
+  });
+
+  ipcMain.handle('stop-project', async (_event, projectKey) => {
+    await stopProject(projectKey);
+    return true;
+  });
+
+  ipcMain.handle('restart-project', async (_event, projectKey) => {
+    await restartProject(projectKey);
+    return true;
+  });
+
+  ipcMain.handle('open-config-folder', async () => {
+    await shell.openPath(path.dirname(getConfigPath()));
+    return true;
+  });
+
+  ipcMain.handle('open-config-file', async () => {
+    await shell.openPath(getConfigPath());
+    return true;
+  });
+
+  ipcMain.handle('choose-project-roots', async () => {
+    return pickProjectRoots();
+  });
+
+  ipcMain.handle('set-project-roots', async (_event, roots) => {
+    const config = loadConfig();
+    saveConfig({
+      ...config,
+      roots: normalizeList(Array.isArray(roots) ? roots : []),
+    });
+    await refreshAll();
+    return currentConfig;
+  });
+
+  ipcMain.handle('set-open-at-login', async (_event, enable) => {
+    return toggleAutoLaunch(Boolean(enable));
+  });
+}
+
+app.whenReady().then(async () => {
+  ensureUserFiles();
+  loadConfig();
+  loadState();
+  registerIpc();
+
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.hide();
+  }
+
+  windowRef = createWindow();
+
+  const trayImage = nativeImage.createFromDataURL(iconDataUrl());
+  tray = new Tray(trayImage);
+  tray.setToolTip(APP_NAME);
+  tray.on('click', () => {
+    if (windowRef && windowRef.isVisible()) {
+      windowRef.hide();
+    } else {
+      showWindow();
+    }
+  });
+
+  await refreshAll();
+  refreshTimer = setInterval(() => {
+    refreshAll().catch(() => {});
+  }, DEFAULT_REFRESH_MS);
+});
+
+app.on('window-all-closed', (event) => {
+  event.preventDefault();
+});
+
+app.on('before-quit', () => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+  }
+});
