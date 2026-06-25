@@ -2,7 +2,6 @@ const api = window.controlPanel;
 
 const els = {
   list: document.getElementById('projectList'),
-  summary: document.getElementById('summary'),
   runningSummary: document.getElementById('runningSummary'),
   rootsCount: document.getElementById('rootsCount'),
   configPath: document.getElementById('configPath'),
@@ -188,19 +187,8 @@ function renderDashboard(data) {
   const projects = runningOnly ? allProjects.filter((project) => project.status === 'running') : allProjects;
   els.list.innerHTML = '';
 
-  if (allProjects.length === 0) {
-    els.summary.textContent = '没有发现项目。把项目根目录加入扫描列表后，符合规范的项目会自动出现。';
-  } else if (runningOnly) {
-    const runningCount = allProjects.filter((project) => project.status === 'running').length;
-    els.summary.textContent = runningCount
-      ? `正在显示 ${runningCount} 个运行中的项目。`
-      : '当前没有运行中的项目。';
-  } else {
-    els.summary.textContent = `共 ${allProjects.length} 个项目，正在监控它们的状态。`;
-  }
-
   const runningCount = allProjects.filter((project) => project.status === 'running').length;
-  els.runningSummary.textContent = runningOnly ? `运行中 ${runningCount}/${allProjects.length}` : `${runningCount} running`;
+  els.runningSummary.textContent = `${allProjects.length} 项目 · ${runningCount} 运行中`;
   els.configPath.textContent = data.configPath || '-';
   els.statePath.textContent = data.statePath || '-';
   els.updatedAt.textContent = formatTimestamp(data.updatedAt);
@@ -274,5 +262,5 @@ api.onAppReady((payload) => {
 });
 
 refresh().catch((error) => {
-  els.summary.textContent = `加载失败：${String(error.message || error)}`;
+  els.runningSummary.textContent = `加载失败：${String(error.message || error)}`;
 });
