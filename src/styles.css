@@ -331,6 +331,48 @@ button:disabled {
   -webkit-box-orient: vertical;
 }
 
+.project-output {
+  margin-top: 6px;
+  color: var(--muted);
+  -webkit-line-clamp: 1;
+}
+
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.meta-field .label {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.meta-field .value {
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status-pill[data-status="running"] {
   background: rgba(124, 219, 141, 0.14);
   color: var(--accent);
@@ -359,7 +401,8 @@ button:disabled {
 .card-meta {
   margin-top: 6px;
   display: grid;
-  gap: 4px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
 }
 
 .card-actions {
@@ -529,6 +572,12 @@ button:disabled {
 
   .root-row {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 760px) {
+  .card-meta {
+    grid-template-columns: 1fr;
   }
 }
 

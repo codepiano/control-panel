@@ -115,6 +115,9 @@ function renderProject(project) {
   const notes = fragment.querySelector('.project-notes');
   const status = fragment.querySelector('.status-pill');
   const pid = fragment.querySelector('.project-pid');
+  const stack = fragment.querySelector('.project-stack');
+  const root = fragment.querySelector('.project-root');
+  const dir = fragment.querySelector('.project-dir');
   const output = fragment.querySelector('.project-output');
   const startBtn = fragment.querySelector('.start-btn');
   const stopBtn = fragment.querySelector('.stop-btn');
@@ -124,14 +127,17 @@ function renderProject(project) {
   const folderBtn = fragment.querySelector('.folder-btn');
 
   name.textContent = project.name;
-  pathNode.textContent = project.projectDir || project.workingDirectory;
-  notes.textContent = [project.notes || '未填写说明', project.source === 'auto' ? `来源：${project.root}` : '来源：手动配置']
-    .filter(Boolean)
-    .join(' · ');
+  pathNode.textContent = project.source === 'auto' ? `来源：${project.root}` : '来源：手动配置';
+  notes.textContent = project.notes || '未填写说明';
   status.textContent = statusLabel(project.status);
   status.dataset.status = project.status;
-  pid.textContent = project.pid ? `PID ${project.pid}` : '无进程 ID';
-  output.textContent = project.details || project.lastOutput || '';
+  pid.textContent = project.pid ? `PID ${project.pid}` : 'PID -';
+  stack.textContent = project.techStack ? `技术栈 ${project.techStack}` : '技术栈 -';
+  root.textContent = project.root || '未配置';
+  dir.textContent = project.projectDir || project.workingDirectory || '未配置';
+  const outputText = project.details || project.lastOutput || '';
+  output.textContent = outputText;
+  output.hidden = !outputText;
 
   startBtn.disabled = project.status === 'running' || project.status === 'starting';
   stopBtn.disabled = project.status === 'stopped' || project.status === 'stopping';

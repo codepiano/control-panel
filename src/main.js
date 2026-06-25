@@ -292,6 +292,40 @@ function resolveRepositoryFromPackage(projectDir) {
   return normalizeGitRemoteUrl(pkg.repository.url || '');
 }
 
+function inferTechStack(projectDir, manifest) {
+  const explicit = String(manifest?.techStack || manifest?.stack || manifest?.technology || manifest?.runtime || '').trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const markers = [
+    { file: 'package.json', label: 'Node.js' },
+    { file: 'pnpm-lock.yaml', label: 'Node.js' },
+    { file: 'yarn.lock', label: 'Node.js' },
+    { file: 'package-lock.json', label: 'Node.js' },
+    { file: 'pyproject.toml', label: 'Python' },
+    { file: 'requirements.txt', label: 'Python' },
+    { file: 'Pipfile', label: 'Python' },
+    { file: 'go.mod', label: 'Go' },
+    { file: 'Cargo.toml', label: 'Rust' },
+    { file: 'composer.json', label: 'PHP' },
+    { file: 'Gemfile', label: 'Ruby' },
+    { file: 'pom.xml', label: 'Java' },
+    { file: 'build.gradle', label: 'Java' },
+    { file: 'build.gradle.kts', label: 'Java' },
+    { file: 'Cargo.lock', label: 'Rust' },
+    { file: 'Makefile', label: 'Native' },
+  ];
+
+  for (const marker of markers) {
+    if (fs.existsSync(path.join(projectDir, marker.file))) {
+      return marker.label;
+    }
+  }
+
+  return '未识别';
+}
+
 async function resolveHomepageFromGit(projectDir) {
   const result = await execCommand('git remote get-url origin', projectDir);
   if (result.code !== 0) {
@@ -333,6 +367,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
   );
   const homepageUrl = resolveHomepageUrl(manifest);
   const repositoryUrl = resolveRepositoryUrl(manifest);
+  const techStack = inferTechStack(projectDir, manifest);
 
   return {
     key: `manifest:${manifestPath}`,
@@ -345,6 +380,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     openHomepageCommand,
     homepageUrl,
     repositoryUrl,
+    techStack,
     notes: String(manifest.notes || ''),
     source,
     root,
@@ -367,6 +403,7 @@ function buildProjectFromLegacyEntry(entry) {
     openHomepageCommand: String(entry.openHomepageCommand || ''),
     homepageUrl: String(entry.homepageUrl || entry.homepage || entry.projectUrl || entry.url || ''),
     repositoryUrl: String(entry.repositoryUrl || entry.repository || entry.repoUrl || entry.repo || ''),
+    techStack: String(entry.techStack || entry.stack || entry.technology || entry.runtime || ''),
     notes: String(entry.notes || ''),
     source: 'legacy',
     root: workingDirectory,
