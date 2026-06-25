@@ -112,6 +112,14 @@ function persistState() {
   writeJson(getStatePath(), { projects: projectState });
 }
 
+function getUsageCount(projectKey) {
+  return Number(projectState[projectKey]?.usageCount || 0);
+}
+
+function getLastStartedAt(projectKey) {
+  return String(projectState[projectKey]?.lastStartedAt || '');
+}
+
 function normalizeCommandResult(result) {
   return {
     code: typeof result.code === 'number' ? result.code : 1,
@@ -493,7 +501,20 @@ function discoverProjects(config) {
     discovered.push(project);
   }
 
-  discovered.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  discovered.sort((a, b) => {
+    const usageGap = getUsageCount(b.key) - getUsageCount(a.key);
+    if (usageGap !== 0) {
+      return usageGap;
+    }
+
+    const lastStartedA = getLastStartedAt(a.key);
+    const lastStartedB = getLastStartedAt(b.key);
+    if (lastStartedA !== lastStartedB) {
+      return lastStartedB.localeCompare(lastStartedA);
+    }
+
+    return a.name.localeCompare(b.name, 'zh-Hans-CN');
+  });
   return discovered;
 }
 
@@ -531,8 +552,11 @@ async function collectProjectsSnapshot() {
 
   for (const project of discovered) {
     const status = await getProjectStatus(project);
+    const state = projectState[project.key] || {};
     snapshot.push({
       ...project,
+      usageCount: Number(state.usageCount || 0),
+      lastStartedAt: String(state.lastStartedAt || ''),
       ...status,
     });
   }
@@ -781,10 +805,14 @@ async function startProject(projectKey) {
 
   try {
     const pid = await launchDetached(project.startCommand, project.workingDirectory);
+    const usageCount = getUsageCount(project.key) + 1;
+    const lastStartedAt = new Date().toISOString();
     projectState[project.key] = {
       pid,
       status: 'running',
       lastOutput: `Started at ${new Date().toLocaleString()}`,
+      usageCount,
+      lastStartedAt,
     };
     persistState();
   } catch (error) {

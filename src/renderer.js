@@ -115,6 +115,8 @@ function renderProject(project) {
   const details = fragment.querySelector('.project-details');
   const detailToggle = fragment.querySelector('.detail-toggle');
   const status = fragment.querySelector('.status-pill');
+  const usage = fragment.querySelector('.project-usage');
+  const lastStarted = fragment.querySelector('.project-last-started');
   const pid = fragment.querySelector('.project-pid');
   const source = fragment.querySelector('.project-source');
   const root = fragment.querySelector('.project-root');
@@ -138,6 +140,8 @@ function renderProject(project) {
   status.dataset.status = project.status;
   status.title = statusLabel(project.status);
   status.setAttribute('aria-label', statusLabel(project.status));
+  usage.textContent = String(project.usageCount || 0);
+  lastStarted.textContent = project.lastStartedAt ? formatTimestamp(project.lastStartedAt) : '-';
   pid.textContent = project.pid ? String(project.pid) : '-';
   source.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '来源：手动配置';
   root.textContent = project.root || '未配置';
