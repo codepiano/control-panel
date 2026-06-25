@@ -1,6 +1,10 @@
 {
   "roots": [
-    "/Users/codepiano/Documents/projects"
+    "/Users/codepiano/Documents/控制面板",
+    "/Users/codepiano/Documents/时间线工具库",
+    "/Users/codepiano/Documents/字符串处理工具",
+    "/Users/codepiano/Documents/诗歌研究",
+    "/Users/codepiano/git"
   ],
   "scan": {
     "manifestName": "control-panel.json",

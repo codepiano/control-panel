@@ -7,6 +7,21 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <header class="window-bar">
+      <div class="window-bar-left">
+        <div class="drag-dots"></div>
+        <div class="window-bar-title">
+          <strong>Control Panel</strong>
+          <span>项目中控</span>
+        </div>
+      </div>
+      <div class="window-bar-right">
+        <button id="refreshBtn" class="primary">刷新</button>
+        <button id="runningOnlyBtn" class="secondary">只看运行中</button>
+        <button id="configBtn" class="secondary">目录</button>
+        <button id="configFileBtn" class="secondary">配置</button>
+      </div>
+    </header>
     <div class="shell">
       <aside class="hero">
         <div class="badge">macOS 菜单栏中控</div>
@@ -14,11 +29,6 @@
         <p>
           这个面板会常驻系统工具栏，统一展示项目状态，支持一键启动、停止、重启，并从本地配置文件加载你的项目清单。
         </p>
-        <div class="hero-actions">
-          <button id="refreshBtn" class="primary">刷新状态</button>
-          <button id="configBtn" class="secondary">管理目录</button>
-          <button id="configFileBtn" class="secondary">打开配置文件</button>
-        </div>
         <label class="toggle-row">
           <span>
             <strong>开机自启</strong>
@@ -26,24 +36,30 @@
           </span>
           <input id="loginToggle" type="checkbox" />
         </label>
-        <div class="meta">
-          <div>
-            <span class="label">扫描目录</span>
-            <span id="rootsCount" class="value">-</span>
+        <details class="info-panel">
+          <summary>
+            <span>信息面板</span>
+            <small>显示扫描和状态摘要</small>
+          </summary>
+          <div class="meta">
+            <div>
+              <span class="label">扫描目录</span>
+              <span id="rootsCount" class="value">-</span>
+            </div>
+            <div>
+              <span class="label">配置文件</span>
+              <span id="configPath" class="value">-</span>
+            </div>
+            <div>
+              <span class="label">最近刷新</span>
+              <span id="updatedAt" class="value">-</span>
+            </div>
+            <div>
+              <span class="label">状态文件</span>
+              <span id="statePath" class="value">-</span>
+            </div>
           </div>
-          <div>
-            <span class="label">配置文件</span>
-            <span id="configPath" class="value">-</span>
-          </div>
-          <div>
-            <span class="label">最近刷新</span>
-            <span id="updatedAt" class="value">-</span>
-          </div>
-          <div>
-            <span class="label">状态文件</span>
-            <span id="statePath" class="value">-</span>
-          </div>
-        </div>
+        </details>
       </aside>
 
       <main class="content">

@@ -1,0 +1,10 @@
+{
+  "id": "control-panel",
+  "name": "控制面板",
+  "workingDirectory": ".",
+  "startCommand": "./scripts/start.sh",
+  "stopCommand": "./scripts/stop.sh",
+  "statusCommand": "./scripts/status.sh",
+  "restartCommand": "./scripts/restart.sh",
+  "notes": "macOS 菜单栏项目中控"
+}

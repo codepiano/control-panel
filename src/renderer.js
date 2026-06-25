@@ -9,6 +9,7 @@ const els = {
   statePath: document.getElementById('statePath'),
   updatedAt: document.getElementById('updatedAt'),
   refreshBtn: document.getElementById('refreshBtn'),
+  runningOnlyBtn: document.getElementById('runningOnlyBtn'),
   configBtn: document.getElementById('configBtn'),
   configFileBtn: document.getElementById('configFileBtn'),
   loginToggle: document.getElementById('loginToggle'),
@@ -22,6 +23,7 @@ const els = {
 };
 
 let latestPayload = null;
+let runningOnly = false;
 
 function formatTimestamp(isoString) {
   if (!isoString) {
@@ -161,21 +163,29 @@ function renderProject(project) {
 
 function renderDashboard(data) {
   latestPayload = data;
-  const projects = data.projects || [];
+  const allProjects = data.projects || [];
+  const projects = runningOnly ? allProjects.filter((project) => project.status === 'running') : allProjects;
   els.list.innerHTML = '';
 
-  if (projects.length === 0) {
+  if (allProjects.length === 0) {
     els.summary.textContent = '没有发现项目。把项目根目录加入扫描列表后，符合规范的项目会自动出现。';
+  } else if (runningOnly) {
+    const runningCount = allProjects.filter((project) => project.status === 'running').length;
+    els.summary.textContent = runningCount
+      ? `正在显示 ${runningCount} 个运行中的项目。`
+      : '当前没有运行中的项目。';
   } else {
-    els.summary.textContent = `共 ${projects.length} 个项目，正在监控它们的状态。`;
+    els.summary.textContent = `共 ${allProjects.length} 个项目，正在监控它们的状态。`;
   }
 
-  const runningCount = projects.filter((project) => project.status === 'running').length;
-  els.runningSummary.textContent = `${runningCount} running`;
+  const runningCount = allProjects.filter((project) => project.status === 'running').length;
+  els.runningSummary.textContent = runningOnly ? `运行中 ${runningCount}/${allProjects.length}` : `${runningCount} running`;
   els.configPath.textContent = data.configPath || '-';
   els.statePath.textContent = data.statePath || '-';
   els.updatedAt.textContent = formatTimestamp(data.updatedAt);
   els.loginToggle.checked = Boolean(data.openAtLogin);
+  els.runningOnlyBtn.classList.toggle('is-active', runningOnly);
+  els.runningOnlyBtn.textContent = runningOnly ? '显示全部' : '只看运行中';
 
   projects.forEach((project) => {
     els.list.appendChild(renderProject(project));
@@ -190,6 +200,12 @@ async function refresh() {
 }
 
 els.refreshBtn.addEventListener('click', refresh);
+els.runningOnlyBtn.addEventListener('click', () => {
+  runningOnly = !runningOnly;
+  if (latestPayload) {
+    renderDashboard(latestPayload);
+  }
+});
 els.configBtn.addEventListener('click', openSettings);
 els.configFileBtn.addEventListener('click', () => api.openConfigFile());
 els.closeSettingsBtn.addEventListener('click', closeSettings);

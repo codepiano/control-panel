@@ -759,10 +759,6 @@ app.whenReady().then(async () => {
   loadState();
   registerIpc();
 
-  if (process.platform === 'darwin' && app.dock) {
-    app.dock.hide();
-  }
-
   windowRef = createWindow();
 
   const trayImage = nativeImage.createFromDataURL(iconDataUrl());
@@ -777,6 +773,10 @@ app.whenReady().then(async () => {
   });
 
   await refreshAll();
+  if (windowRef && !windowRef.isVisible()) {
+    windowRef.show();
+    windowRef.focus();
+  }
   refreshTimer = setInterval(() => {
     refreshAll().catch(() => {});
   }, DEFAULT_REFRESH_MS);
