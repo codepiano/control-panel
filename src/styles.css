@@ -135,7 +135,10 @@ h1 {
 }
 
 .hero-actions {
-  display: none;
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
 }
 
 .toggle-row {
