@@ -208,6 +208,60 @@ function resolveScriptFallback(manifestDir, scriptName) {
   return '';
 }
 
+function resolveHomepageUrl(manifest) {
+  if (!manifest || typeof manifest !== 'object') {
+    return '';
+  }
+
+  const homepage = manifest.homepageUrl || manifest.homepage || manifest.projectUrl || manifest.url || '';
+  return String(homepage).trim();
+}
+
+function normalizeGitRemoteUrl(remoteUrl) {
+  const value = String(remoteUrl || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  if (value.startsWith('git@github.com:')) {
+    return `https://github.com/${value.slice('git@github.com:'.length).replace(/\.git$/, '')}`;
+  }
+
+  if (value.startsWith('git@gitlab.com:')) {
+    return `https://gitlab.com/${value.slice('git@gitlab.com:'.length).replace(/\.git$/, '')}`;
+  }
+
+  if (value.startsWith('git@bitbucket.org:')) {
+    return `https://bitbucket.org/${value.slice('git@bitbucket.org:'.length).replace(/\.git$/, '')}`;
+  }
+
+  return value.replace(/\.git$/, '');
+}
+
+function resolveHomepageFromPackage(projectDir) {
+  const packagePath = path.join(projectDir, 'package.json');
+  if (!fs.existsSync(packagePath)) {
+    return '';
+  }
+
+  const pkg = readJson(packagePath, null);
+  if (!pkg || typeof pkg !== 'object') {
+    return '';
+  }
+
+  const homepage = pkg.homepage || pkg.repository?.url || '';
+  return normalizeGitRemoteUrl(homepage);
+}
+
+async function resolveHomepageFromGit(projectDir) {
+  const result = await execCommand('git remote get-url origin', projectDir);
+  if (result.code !== 0) {
+    return '';
+  }
+
+  return normalizeGitRemoteUrl(result.stdout.trim());
+}
+
 function parseManifest(manifestPath) {
   try {
     return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -231,6 +285,14 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
   const statusCommand = String(
     manifest.statusCommand || manifest.status || scripts.status || resolveScriptFallback(projectDir, 'status') || ''
   );
+  const openHomepageCommand = String(
+    manifest.openHomepageCommand ||
+      manifest.openHomepage ||
+      scripts.openHomepage ||
+      resolveScriptFallback(projectDir, 'open-homepage') ||
+      ''
+  );
+  const homepageUrl = resolveHomepageUrl(manifest);
 
   return {
     key: `manifest:${manifestPath}`,
@@ -240,6 +302,8 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     startCommand,
     stopCommand,
     statusCommand,
+    openHomepageCommand,
+    homepageUrl,
     notes: String(manifest.notes || ''),
     source,
     root,
@@ -259,6 +323,8 @@ function buildProjectFromLegacyEntry(entry) {
     startCommand: String(entry.startCommand || ''),
     stopCommand: String(entry.stopCommand || ''),
     statusCommand: String(entry.statusCommand || ''),
+    openHomepageCommand: String(entry.openHomepageCommand || ''),
+    homepageUrl: String(entry.homepageUrl || entry.homepage || entry.projectUrl || entry.url || ''),
     notes: String(entry.notes || ''),
     source: 'legacy',
     root: workingDirectory,
@@ -671,6 +737,43 @@ async function restartProject(projectKey) {
   await startProject(projectKey);
 }
 
+async function openProjectHomepage(projectKey) {
+  const project = findProjectByKey(projectKey);
+  if (!project) {
+    return;
+  }
+
+  if (project.homepageUrl) {
+    await shell.openExternal(project.homepageUrl);
+    return;
+  }
+
+  if (project.openHomepageCommand) {
+    await execCommand(project.openHomepageCommand, project.workingDirectory);
+    return;
+  }
+
+  const packageHomepage = resolveHomepageFromPackage(project.projectDir);
+  if (packageHomepage) {
+    await shell.openExternal(packageHomepage);
+    return;
+  }
+
+  const gitHomepage = await resolveHomepageFromGit(project.projectDir);
+  if (gitHomepage) {
+    await shell.openExternal(gitHomepage);
+    return;
+  }
+
+  await dialog.showMessageBox({
+    type: 'info',
+    buttons: ['OK'],
+    title: APP_NAME,
+    message: '无法确定项目主页',
+    detail: '请在 control-panel.json 中配置 homepageUrl 或 openHomepageCommand，或者在 package.json / git remote 中提供可推断的主页地址。',
+  });
+}
+
 async function toggleAutoLaunch(enable) {
   if (!app.setLoginItemSettings) {
     return false;
@@ -721,6 +824,11 @@ function registerIpc() {
 
   ipcMain.handle('restart-project', async (_event, projectKey) => {
     await restartProject(projectKey);
+    return true;
+  });
+
+  ipcMain.handle('open-project-homepage', async (_event, projectKey) => {
+    await openProjectHomepage(projectKey);
     return true;
   });
 

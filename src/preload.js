@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('controlPanel', {
   startProject: (projectId) => ipcRenderer.invoke('start-project', projectId),
   stopProject: (projectId) => ipcRenderer.invoke('stop-project', projectId),
   restartProject: (projectId) => ipcRenderer.invoke('restart-project', projectId),
+  openProjectHomepage: (projectId) => ipcRenderer.invoke('open-project-homepage', projectId),
   refreshProjects: () => ipcRenderer.invoke('refresh-projects'),
   openConfigFolder: () => ipcRenderer.invoke('open-config-folder'),
   openConfigFile: () => ipcRenderer.invoke('open-config-file'),

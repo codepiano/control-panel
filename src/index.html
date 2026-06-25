@@ -108,7 +108,8 @@
     status.sh</pre>
           <p>
             `control-panel.json` 支持字段：`name`、`id`、`workingDirectory`、`startCommand`、`stopCommand`、
-            `statusCommand`、`notes`。也可以写成 `scripts.start`、`scripts.stop`、`scripts.status`。
+            `statusCommand`、`openHomepageCommand`、`homepageUrl`、`notes`。也可以写成 `scripts.start`、
+            `scripts.stop`、`scripts.status`、`scripts.openHomepage`。
           </p>
           <p>
             只要目录被加入扫描列表，面板就会递归找到其中的 `control-panel.json`，自动纳入控制。
@@ -135,6 +136,7 @@
           <button class="start-btn">启动</button>
           <button class="stop-btn ghost">停止</button>
           <button class="restart-btn ghost">重启</button>
+          <button class="homepage-btn ghost">主页</button>
           <button class="folder-btn ghost">目录</button>
         </div>
       </section>

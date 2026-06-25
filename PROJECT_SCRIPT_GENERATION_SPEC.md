@@ -18,6 +18,7 @@ This spec covers:
 
 - Discovering a project’s runtime entrypoints
 - Generating `start`, `stop`, `status`, and optional `restart` scripts
+- Respecting project-authored scripts when they already exist
 - Updating `control-panel.json`
 - Making scripts safe, repeatable, and executable on macOS
 - Producing a machine-readable change set or patch that can be applied directly
@@ -58,9 +59,25 @@ Every controllable project should be representable by a `control-panel.json` fil
 - `stopCommand`: command used to stop the project
 - `statusCommand`: command used to check whether the project is running
 - `restartCommand`: command used to restart the project
+- `openHomepageCommand`: command used to open the project homepage
+- `homepageUrl`: canonical project homepage, preferred when opening the project page
 - `notes`: short operator note
 - `specUrl`: documentation or product spec URL for the project
 - `scripts`: optional object mapping lifecycle names to relative script paths
+
+### 3.3 Resolution order
+
+When both script paths and direct commands are available, the AI should prefer the project-authored script path first.
+
+Recommended precedence:
+
+- `scripts.start` / `startCommand`
+- `scripts.stop` / `stopCommand`
+- `scripts.status` / `statusCommand`
+- `scripts.restart` / `restartCommand`
+- `scripts.openHomepage` / `openHomepageCommand`
+
+If a manifest provides `homepageUrl`, use it before trying any heuristic lookup.
 
 ### 3.3 Script path convention
 
@@ -72,6 +89,7 @@ Recommended convention:
 - `scripts/stop.sh`
 - `scripts/status.sh`
 - `scripts/restart.sh`
+- `scripts/open-homepage.sh`
 
 ## 4. Discovery Rules
 
@@ -86,6 +104,7 @@ The AI should infer the project type and lifecycle commands from the repository 
 - Existing scripts in `scripts/`
 
 If multiple entrypoints exist, prefer the least surprising long-running service entrypoint.
+If the repository already exposes a dedicated startup script, use it rather than inventing a new startup command.
 
 ## 5. Generation Rules
 
@@ -145,6 +164,7 @@ If `package.json` exists:
 - Otherwise prefer `npm start`
 - If neither exists, inspect scripts and infer the most likely long-running server command
 - If the project uses a custom dev server or workspace runner, encode that directly in the script
+- If the project already has a startup script checked into the repository, reuse it or wrap it instead of replacing it
 
 ### 6.2 Python
 
@@ -178,6 +198,13 @@ If the project has a `specUrl`, the AI should:
 - Use the spec to choose or refine scripts
 - Respect project-specific terminology and constraints from that spec
 - Treat the spec as the higher-priority source over generic heuristics
+
+When opening a project homepage, resolve in this order:
+
+1. `homepageUrl` or `homepage` in `control-panel.json`
+2. `homepage` or repository metadata in `package.json`
+3. Git remote inference
+4. Fallback to a best-effort repository home URL only when inference is ambiguous
 
 If the spec is ambiguous:
 
@@ -253,6 +280,7 @@ project-root/
   "startCommand": "./scripts/start.sh",
   "stopCommand": "./scripts/stop.sh",
   "statusCommand": "./scripts/status.sh",
+  "homepageUrl": "https://example.com/project",
   "notes": "本地开发服务",
   "specUrl": "https://example.com/project-spec"
 }
@@ -289,6 +317,15 @@ set -euo pipefail
 pgrep -f "npm run dev" >/dev/null
 ```
 
+### 12.4 `scripts/open-homepage.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+open "https://example.com/project"
+```
+
 ## 13. Clarification Policy
 
 Ask a clarification question only when:
@@ -310,6 +347,7 @@ A generated project should satisfy all of these:
 - The status script can distinguish running from not running
 - The manifest points to the scripts correctly
 - The spec link, if present, is preserved in the manifest
+- The homepage script opens the intended project page
 
 ## 15. Usage note for external AI
 
@@ -319,4 +357,3 @@ When you hand this file to another AI, ask it to:
 - Inspect the project repository
 - Generate or update the control scripts
 - Return a patch or file manifest only
-

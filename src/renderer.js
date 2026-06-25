@@ -119,6 +119,7 @@ function renderProject(project) {
   const startBtn = fragment.querySelector('.start-btn');
   const stopBtn = fragment.querySelector('.stop-btn');
   const restartBtn = fragment.querySelector('.restart-btn');
+  const homepageBtn = fragment.querySelector('.homepage-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
 
   name.textContent = project.name;
@@ -134,6 +135,7 @@ function renderProject(project) {
   startBtn.disabled = project.status === 'running' || project.status === 'starting';
   stopBtn.disabled = project.status === 'stopped' || project.status === 'stopping';
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
+  homepageBtn.disabled = !(project.homepageUrl || project.openHomepageCommand);
 
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
@@ -150,6 +152,12 @@ function renderProject(project) {
   restartBtn.addEventListener('click', async () => {
     restartBtn.disabled = true;
     await api.restartProject(project.key);
+    await refresh();
+  });
+
+  homepageBtn.addEventListener('click', async () => {
+    homepageBtn.disabled = true;
+    await api.openProjectHomepage(project.key);
     await refresh();
   });
 

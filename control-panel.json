@@ -6,5 +6,7 @@
   "stopCommand": "./scripts/stop.sh",
   "statusCommand": "./scripts/status.sh",
   "restartCommand": "./scripts/restart.sh",
+  "openHomepageCommand": "./scripts/open-homepage.sh",
+  "homepageUrl": "https://github.com/codepiano/control-panel.git",
   "notes": "macOS 菜单栏项目中控"
 }
