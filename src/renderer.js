@@ -115,6 +115,7 @@ function renderProject(project) {
   const details = fragment.querySelector('.project-details');
   const status = fragment.querySelector('.status-pill');
   const pid = fragment.querySelector('.project-pid');
+  const source = fragment.querySelector('.project-source');
   const root = fragment.querySelector('.project-root');
   const dir = fragment.querySelector('.project-dir');
   const output = fragment.querySelector('.project-output');
@@ -128,11 +129,14 @@ function renderProject(project) {
   const summaryText = project.notes || '未填写说明';
   const outputText = project.details || project.lastOutput || '';
   name.textContent = `${project.name} · ${summaryText}`;
-  pathNode.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '手动配置项目';
-  notes.textContent = outputText ? outputText : (project.source === 'auto' ? `来源：${project.root}` : '来源：手动配置');
+  pathNode.textContent = outputText || '';
+  notes.textContent = '';
+  pathNode.hidden = !outputText;
+  notes.hidden = true;
   status.textContent = statusLabel(project.status);
   status.dataset.status = project.status;
   pid.textContent = project.pid ? String(project.pid) : '-';
+  source.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '来源：手动配置';
   root.textContent = project.root || '未配置';
   dir.textContent = project.projectDir || project.workingDirectory || '未配置';
   output.textContent = outputText || '-';
