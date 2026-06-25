@@ -125,15 +125,16 @@ function renderProject(project) {
   const repositoryBtn = fragment.querySelector('.repository-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
 
-  name.textContent = project.name;
-  pathNode.textContent = project.notes || '未填写说明';
-  notes.textContent = project.source === 'auto' ? `来源：${project.root}` : '来源：手动配置';
+  const summaryText = project.notes || '未填写说明';
+  const outputText = project.details || project.lastOutput || '';
+  name.textContent = `${project.name} · ${summaryText}`;
+  pathNode.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '手动配置项目';
+  notes.textContent = outputText ? outputText : (project.source === 'auto' ? `来源：${project.root}` : '来源：手动配置');
   status.textContent = statusLabel(project.status);
   status.dataset.status = project.status;
   pid.textContent = project.pid ? String(project.pid) : '-';
   root.textContent = project.root || '未配置';
   dir.textContent = project.projectDir || project.workingDirectory || '未配置';
-  const outputText = project.details || project.lastOutput || '';
   output.textContent = outputText || '-';
   details.hidden = !project.pid && !outputText && !project.root && !(project.projectDir || project.workingDirectory);
 

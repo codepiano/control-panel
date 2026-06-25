@@ -276,9 +276,17 @@ button:disabled {
   gap: 8px;
 }
 
+.project-headline {
+  min-width: 0;
+}
+
 .project-name {
   margin: 0 0 4px;
   font-size: 14px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-path,
