@@ -651,12 +651,6 @@ function createWindow() {
     });
   });
 
-  win.on('blur', () => {
-    if (process.platform === 'darwin') {
-      win.hide();
-    }
-  });
-
   return win;
 }
 
