@@ -29,35 +29,15 @@
         <p>
           这个面板会常驻系统工具栏，统一展示项目状态，支持一键启动、停止、重启，并从本地配置文件加载你的项目清单。
         </p>
-        <details class="info-panel">
-          <summary>
-            <span>信息面板</span>
-            <small>显示扫描和状态摘要</small>
-          </summary>
-          <div class="meta">
-            <div>
-              <span class="label">扫描目录</span>
-              <span id="rootsCount" class="value">-</span>
-            </div>
-            <div>
-              <span class="label">配置文件</span>
-              <span id="configPath" class="value">-</span>
-            </div>
-            <div>
-              <span class="label">最近刷新</span>
-              <span id="updatedAt" class="value">-</span>
-            </div>
-            <div>
-              <span class="label">状态文件</span>
-              <span id="statePath" class="value">-</span>
-            </div>
-          </div>
-        </details>
-        <div class="hero-actions">
-          <button id="refreshBtn" class="primary">刷新状态</button>
-          <button id="configBtn" class="secondary">管理目录</button>
-          <button id="configFileBtn" class="secondary">打开配置文件</button>
-        </div>
+        <section class="hero-card">
+          <label class="toggle-row">
+            <span>
+              <strong>开机自启</strong>
+              <small>登录后自动打开这个控制面板</small>
+            </span>
+            <input id="loginToggle" type="checkbox" />
+          </label>
+        </section>
       </aside>
 
       <main class="content">
@@ -68,6 +48,37 @@
           </div>
           <div class="chip" id="runningSummary">0 running</div>
         </div>
+        <section class="content-toolbar">
+          <details class="info-panel">
+            <summary>
+              <span>信息面板</span>
+              <small>显示扫描和状态摘要</small>
+            </summary>
+            <div class="meta">
+              <div>
+                <span class="label">扫描目录</span>
+                <span id="rootsCount" class="value">-</span>
+              </div>
+              <div>
+                <span class="label">配置文件</span>
+                <span id="configPath" class="value">-</span>
+              </div>
+              <div>
+                <span class="label">最近刷新</span>
+                <span id="updatedAt" class="value">-</span>
+              </div>
+              <div>
+                <span class="label">状态文件</span>
+                <span id="statePath" class="value">-</span>
+              </div>
+            </div>
+          </details>
+          <div class="hero-actions hero-actions-right">
+            <button id="refreshBtn" class="primary">刷新状态</button>
+            <button id="configBtn" class="secondary">管理目录</button>
+            <button id="configFileBtn" class="secondary">打开配置文件</button>
+          </div>
+        </section>
         <div id="projectList" class="grid"></div>
       </main>
     </div>
@@ -81,16 +92,6 @@
           </div>
           <button id="closeSettingsBtn" class="secondary">关闭</button>
         </div>
-
-        <section class="panel">
-          <label class="toggle-row">
-            <span>
-              <strong>开机自启</strong>
-              <small>登录后自动打开这个控制面板</small>
-            </span>
-            <input id="loginToggle" type="checkbox" />
-          </label>
-        </section>
 
         <section class="panel">
           <div class="field-row">

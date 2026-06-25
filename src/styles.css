@@ -99,6 +99,12 @@ body {
   gap: 12px;
 }
 
+.hero-card {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+}
+
 .badge,
 .chip,
 .status-pill {
@@ -139,6 +145,11 @@ h1 {
   gap: 8px;
   margin-top: 4px;
   flex-wrap: wrap;
+}
+
+.hero-actions-right {
+  margin-top: 0;
+  justify-content: flex-end;
 }
 
 .toggle-row {
@@ -203,6 +214,14 @@ h1 {
 
 .info-panel .meta {
   margin-top: 10px;
+}
+
+.content-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
 }
 
 button {
@@ -493,6 +512,10 @@ button:disabled {
 @media (max-width: 1120px) {
   .shell {
     grid-template-columns: 1fr;
+  }
+
+  .content-toolbar {
+    flex-direction: column;
   }
 
   .grid {
