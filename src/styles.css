@@ -331,28 +331,6 @@ button:disabled {
   -webkit-box-orient: vertical;
 }
 
-.project-output {
-  margin-top: 6px;
-  color: var(--muted);
-  -webkit-line-clamp: 1;
-}
-
-.meta-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-width: 0;
-  padding: 6px 10px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--line);
-  font-size: 11px;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .meta-field {
   display: grid;
   gap: 3px;
@@ -403,6 +381,36 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 10px;
+}
+
+.project-details {
+  margin-top: 6px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding-top: 6px;
+}
+
+.project-details summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  user-select: none;
+}
+
+.project-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.project-details summary::after {
+  content: "展开";
+}
+
+.project-details[open] summary::after {
+  content: "收起";
+}
+
+.project-details .card-meta {
+  margin-top: 8px;
 }
 
 .card-actions {

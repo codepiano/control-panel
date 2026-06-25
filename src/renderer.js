@@ -113,9 +113,9 @@ function renderProject(project) {
   const name = fragment.querySelector('.project-name');
   const pathNode = fragment.querySelector('.project-path');
   const notes = fragment.querySelector('.project-notes');
+  const details = fragment.querySelector('.project-details');
   const status = fragment.querySelector('.status-pill');
   const pid = fragment.querySelector('.project-pid');
-  const stack = fragment.querySelector('.project-stack');
   const root = fragment.querySelector('.project-root');
   const dir = fragment.querySelector('.project-dir');
   const output = fragment.querySelector('.project-output');
@@ -127,17 +127,16 @@ function renderProject(project) {
   const folderBtn = fragment.querySelector('.folder-btn');
 
   name.textContent = project.name;
-  pathNode.textContent = project.source === 'auto' ? `来源：${project.root}` : '来源：手动配置';
-  notes.textContent = project.notes || '未填写说明';
+  pathNode.textContent = project.notes || '未填写说明';
+  notes.textContent = project.source === 'auto' ? `来源：${project.root}` : '来源：手动配置';
   status.textContent = statusLabel(project.status);
   status.dataset.status = project.status;
-  pid.textContent = project.pid ? `PID ${project.pid}` : 'PID -';
-  stack.textContent = project.techStack ? `技术栈 ${project.techStack}` : '技术栈 -';
+  pid.textContent = project.pid ? String(project.pid) : '-';
   root.textContent = project.root || '未配置';
   dir.textContent = project.projectDir || project.workingDirectory || '未配置';
   const outputText = project.details || project.lastOutput || '';
-  output.textContent = outputText;
-  output.hidden = !outputText;
+  output.textContent = outputText || '-';
+  details.hidden = !project.pid && !outputText && !project.root && !(project.projectDir || project.workingDirectory);
 
   startBtn.disabled = project.status === 'running' || project.status === 'starting';
   stopBtn.disabled = project.status === 'stopped' || project.status === 'stopping';

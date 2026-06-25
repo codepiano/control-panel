@@ -133,19 +133,27 @@
           <div class="status-pill"></div>
         </div>
         <p class="project-notes"></p>
-        <div class="card-meta">
-          <div class="meta-chip project-pid"></div>
-          <div class="meta-chip project-stack"></div>
-          <div class="meta-field">
-            <span class="label">所在目录</span>
-            <span class="project-root value"></span>
+        <details class="project-details">
+          <summary>详情</summary>
+          <div class="card-meta">
+            <div class="meta-field">
+              <span class="label">进程 ID</span>
+              <span class="project-pid value"></span>
+            </div>
+            <div class="meta-field">
+              <span class="label">所在目录</span>
+              <span class="project-root value"></span>
+            </div>
+            <div class="meta-field">
+              <span class="label">项目目录</span>
+              <span class="project-dir value"></span>
+            </div>
+            <div class="meta-field">
+              <span class="label">最近输出</span>
+              <span class="project-output value"></span>
+            </div>
           </div>
-          <div class="meta-field">
-            <span class="label">项目目录</span>
-            <span class="project-dir value"></span>
-          </div>
-        </div>
-        <p class="project-output"></p>
+        </details>
         <div class="card-actions">
           <button class="start-btn">启动</button>
           <button class="stop-btn ghost">停止</button>
