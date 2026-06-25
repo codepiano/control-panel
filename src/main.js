@@ -546,10 +546,13 @@ async function collectProjectsSnapshot() {
 
 function iconDataUrl() {
   const svg = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-      <rect width="128" height="128" rx="28" fill="#111827"/>
-      <path d="M28 40h72v12H28zM28 58h72v12H28zM28 76h48v12H28z" fill="#f9fafb"/>
-      <circle cx="92" cy="82" r="12" fill="#22c55e"/>
+    `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+      <g fill="#000000">
+        <rect x="3" y="5" width="12" height="2.2" rx="1.1"/>
+        <rect x="3" y="10" width="12" height="2.2" rx="1.1"/>
+        <rect x="3" y="15" width="8" height="2.2" rx="1.1"/>
+        <circle cx="17.5" cy="16.1" r="2.2"/>
+      </g>
     </svg>`
   ).toString('base64');
   return `data:image/svg+xml;base64,${svg}`;
@@ -979,7 +982,10 @@ app.whenReady().then(async () => {
 
   windowRef = createWindow();
 
-  const trayImage = nativeImage.createFromDataURL(iconDataUrl());
+  const trayImage = nativeImage
+    .createFromDataURL(iconDataUrl())
+    .resize({ width: 18, height: 18 });
+  trayImage.setTemplateImage(true);
   tray = new Tray(trayImage);
   tray.setToolTip(APP_NAME);
   tray.on('click', () => {
