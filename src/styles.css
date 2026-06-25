@@ -146,6 +146,15 @@ h1 {
   justify-content: flex-end;
 }
 
+.content-header-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
 .toggle-row {
   display: flex;
   justify-content: space-between;
@@ -208,14 +217,6 @@ h1 {
 
 .info-panel .meta {
   margin-top: 10px;
-}
-
-.content-toolbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 0 12px;
 }
 
 button {
@@ -508,8 +509,14 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .content-toolbar {
+  .content-header {
     flex-direction: column;
+  }
+
+  .content-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
   }
 
   .grid {

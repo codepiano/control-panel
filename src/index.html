@@ -37,39 +37,39 @@
             <h2>项目列表</h2>
             <p id="summary">正在加载项目状态。</p>
           </div>
-          <div class="chip" id="runningSummary">0 running</div>
-        </div>
-        <section class="content-toolbar">
-          <details class="info-panel">
-            <summary>
-              <span>信息面板</span>
-              <small>显示扫描和状态摘要</small>
-            </summary>
-            <div class="meta">
-              <div>
-                <span class="label">扫描目录</span>
-                <span id="rootsCount" class="value">-</span>
+          <div class="content-header-actions">
+            <div class="chip" id="runningSummary">0 running</div>
+            <details class="info-panel">
+              <summary>
+                <span>信息面板</span>
+                <small>显示扫描和状态摘要</small>
+              </summary>
+              <div class="meta">
+                <div>
+                  <span class="label">扫描目录</span>
+                  <span id="rootsCount" class="value">-</span>
+                </div>
+                <div>
+                  <span class="label">配置文件</span>
+                  <span id="configPath" class="value">-</span>
+                </div>
+                <div>
+                  <span class="label">最近刷新</span>
+                  <span id="updatedAt" class="value">-</span>
+                </div>
+                <div>
+                  <span class="label">状态文件</span>
+                  <span id="statePath" class="value">-</span>
+                </div>
               </div>
-              <div>
-                <span class="label">配置文件</span>
-                <span id="configPath" class="value">-</span>
-              </div>
-              <div>
-                <span class="label">最近刷新</span>
-                <span id="updatedAt" class="value">-</span>
-              </div>
-              <div>
-                <span class="label">状态文件</span>
-                <span id="statePath" class="value">-</span>
-              </div>
+            </details>
+            <div class="hero-actions hero-actions-right">
+              <button id="refreshBtn" class="primary">刷新状态</button>
+              <button id="configBtn" class="secondary">管理目录</button>
+              <button id="configFileBtn" class="secondary">打开配置文件</button>
             </div>
-          </details>
-          <div class="hero-actions hero-actions-right">
-            <button id="refreshBtn" class="primary">刷新状态</button>
-            <button id="configBtn" class="secondary">管理目录</button>
-            <button id="configFileBtn" class="secondary">打开配置文件</button>
           </div>
-        </section>
+        </div>
         <div id="projectList" class="grid"></div>
       </main>
     </div>
