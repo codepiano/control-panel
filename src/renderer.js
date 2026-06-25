@@ -120,6 +120,7 @@ function renderProject(project) {
   const stopBtn = fragment.querySelector('.stop-btn');
   const restartBtn = fragment.querySelector('.restart-btn');
   const homepageBtn = fragment.querySelector('.homepage-btn');
+  const repositoryBtn = fragment.querySelector('.repository-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
 
   name.textContent = project.name;
@@ -136,6 +137,7 @@ function renderProject(project) {
   stopBtn.disabled = project.status === 'stopped' || project.status === 'stopping';
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
   homepageBtn.disabled = !(project.homepageUrl || project.openHomepageCommand);
+  repositoryBtn.disabled = !project.projectDir;
 
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
@@ -158,6 +160,12 @@ function renderProject(project) {
   homepageBtn.addEventListener('click', async () => {
     homepageBtn.disabled = true;
     await api.openProjectHomepage(project.key);
+    await refresh();
+  });
+
+  repositoryBtn.addEventListener('click', async () => {
+    repositoryBtn.disabled = true;
+    await api.openProjectRepository(project.key);
     await refresh();
   });
 

@@ -217,6 +217,23 @@ function resolveHomepageUrl(manifest) {
   return String(homepage).trim();
 }
 
+function resolveRepositoryUrl(manifest) {
+  if (!manifest || typeof manifest !== 'object') {
+    return '';
+  }
+
+  const repository = manifest.repositoryUrl || manifest.repository || manifest.repoUrl || manifest.repo || '';
+  if (typeof repository === 'string') {
+    return normalizeGitRemoteUrl(repository);
+  }
+
+  if (repository && typeof repository === 'object') {
+    return normalizeGitRemoteUrl(repository.url || '');
+  }
+
+  return '';
+}
+
 function normalizeGitRemoteUrl(remoteUrl) {
   const value = String(remoteUrl || '').trim();
   if (!value) {
@@ -251,6 +268,28 @@ function resolveHomepageFromPackage(projectDir) {
 
   const homepage = pkg.homepage || pkg.repository?.url || '';
   return normalizeGitRemoteUrl(homepage);
+}
+
+function resolveRepositoryFromPackage(projectDir) {
+  const packagePath = path.join(projectDir, 'package.json');
+  if (!fs.existsSync(packagePath)) {
+    return '';
+  }
+
+  const pkg = readJson(packagePath, null);
+  if (!pkg || typeof pkg !== 'object') {
+    return '';
+  }
+
+  if (!pkg.repository) {
+    return '';
+  }
+
+  if (typeof pkg.repository === 'string') {
+    return normalizeGitRemoteUrl(pkg.repository);
+  }
+
+  return normalizeGitRemoteUrl(pkg.repository.url || '');
 }
 
 async function resolveHomepageFromGit(projectDir) {
@@ -293,6 +332,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
       ''
   );
   const homepageUrl = resolveHomepageUrl(manifest);
+  const repositoryUrl = resolveRepositoryUrl(manifest);
 
   return {
     key: `manifest:${manifestPath}`,
@@ -304,6 +344,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     statusCommand,
     openHomepageCommand,
     homepageUrl,
+    repositoryUrl,
     notes: String(manifest.notes || ''),
     source,
     root,
@@ -325,6 +366,7 @@ function buildProjectFromLegacyEntry(entry) {
     statusCommand: String(entry.statusCommand || ''),
     openHomepageCommand: String(entry.openHomepageCommand || ''),
     homepageUrl: String(entry.homepageUrl || entry.homepage || entry.projectUrl || entry.url || ''),
+    repositoryUrl: String(entry.repositoryUrl || entry.repository || entry.repoUrl || entry.repo || ''),
     notes: String(entry.notes || ''),
     source: 'legacy',
     root: workingDirectory,
@@ -774,6 +816,38 @@ async function openProjectHomepage(projectKey) {
   });
 }
 
+async function openProjectRepository(projectKey) {
+  const project = findProjectByKey(projectKey);
+  if (!project) {
+    return;
+  }
+
+  if (project.repositoryUrl) {
+    await shell.openExternal(project.repositoryUrl);
+    return;
+  }
+
+  const packageRepository = resolveRepositoryFromPackage(project.projectDir);
+  if (packageRepository) {
+    await shell.openExternal(packageRepository);
+    return;
+  }
+
+  const gitRepository = await resolveHomepageFromGit(project.projectDir);
+  if (gitRepository) {
+    await shell.openExternal(gitRepository);
+    return;
+  }
+
+  await dialog.showMessageBox({
+    type: 'info',
+    buttons: ['OK'],
+    title: APP_NAME,
+    message: '无法确定项目仓库',
+    detail: '请在 control-panel.json 中配置 repositoryUrl，或者在 package.json / git remote 中提供可推断的仓库地址。',
+  });
+}
+
 async function toggleAutoLaunch(enable) {
   if (!app.setLoginItemSettings) {
     return false;
@@ -829,6 +903,11 @@ function registerIpc() {
 
   ipcMain.handle('open-project-homepage', async (_event, projectKey) => {
     await openProjectHomepage(projectKey);
+    return true;
+  });
+
+  ipcMain.handle('open-project-repository', async (_event, projectKey) => {
+    await openProjectRepository(projectKey);
     return true;
   });
 
