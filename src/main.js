@@ -987,6 +987,9 @@ app.whenReady().then(async () => {
     .resize({ width: 18, height: 18 });
   trayImage.setTemplateImage(true);
   tray = new Tray(trayImage);
+  if (process.platform === 'darwin') {
+    tray.setTitle('CP');
+  }
   tray.setToolTip(APP_NAME);
   tray.on('click', () => {
     if (windowRef && windowRef.isVisible()) {
