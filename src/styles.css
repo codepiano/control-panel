@@ -99,12 +99,6 @@ body {
   gap: 12px;
 }
 
-.hero-card {
-  display: grid;
-  gap: 10px;
-  margin-top: auto;
-}
-
 .badge,
 .chip,
 .status-pill {
