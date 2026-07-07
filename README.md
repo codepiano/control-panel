@@ -30,7 +30,7 @@ CONTROL_PANEL_CONFIG=/path/to/projects.json npm start
 
 ## 扫描模式
 
-在界面里把项目根目录加入扫描列表后，应用会递归查找这些目录里的 `control-panel.json`。
+在界面里把项目根目录加入扫描列表后，应用只会检查根目录本身，以及每个直接子目录里的 `control-panel.json`。
 
 一个符合规范的项目目录长这样：
 

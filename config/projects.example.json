@@ -8,6 +8,6 @@
   ],
   "scan": {
     "manifestName": "control-panel.json",
-    "maxDepth": 4
+    "maxDepth": 1
   }
 }

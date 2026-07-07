@@ -69,7 +69,7 @@ function renderRootRow(root) {
   title.textContent = root;
 
   const subtitle = document.createElement('span');
-  subtitle.textContent = '加入后会递归扫描其中的 control-panel.json';
+  subtitle.textContent = '只检查根目录和每个直接子目录中的 control-panel.json';
 
   const remove = document.createElement('button');
   remove.className = 'ghost';

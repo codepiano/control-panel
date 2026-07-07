@@ -6,7 +6,7 @@ const { exec, spawn } = require('child_process');
 const APP_NAME = 'Control Panel';
 const CONFIG_ENV = 'CONTROL_PANEL_CONFIG';
 const DEFAULT_REFRESH_MS = 5000;
-const DEFAULT_SCAN_DEPTH = 4;
+const DEFAULT_SCAN_DEPTH = 1;
 const DEFAULT_MANIFEST_NAME = 'control-panel.json';
 const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
 
@@ -540,21 +540,13 @@ function findProjectManifests(root, manifestName, maxDepth) {
     return results;
   }
 
-  function walk(currentDir, depth) {
-    if (depth > maxDepth) {
-      return;
-    }
-
+  const candidateDirs = [rootPath];
+  if (maxDepth > 0) {
     let entries = [];
     try {
-      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      entries = fs.readdirSync(rootPath, { withFileTypes: true });
     } catch (error) {
-      return;
-    }
-
-    const manifestPath = path.join(currentDir, manifestName);
-    if (fs.existsSync(manifestPath) && fs.statSync(manifestPath).isFile()) {
-      results.push(manifestPath);
+      entries = [];
     }
 
     for (const entry of entries) {
@@ -566,11 +558,17 @@ function findProjectManifests(root, manifestName, maxDepth) {
         continue;
       }
 
-      walk(path.join(currentDir, entry.name), depth + 1);
+      candidateDirs.push(path.join(rootPath, entry.name));
     }
   }
 
-  walk(rootPath, 0);
+  for (const currentDir of candidateDirs) {
+    const manifestPath = path.join(currentDir, manifestName);
+    if (fs.existsSync(manifestPath) && fs.statSync(manifestPath).isFile()) {
+      results.push(manifestPath);
+    }
+  }
+
   return results;
 }
 
