@@ -9,6 +9,8 @@ const DEFAULT_REFRESH_MS = 5000;
 const DEFAULT_SCAN_DEPTH = 1;
 const DEFAULT_MANIFEST_NAME = 'control-panel.json';
 const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
+const APP_ICON_PATH = path.join(app.getAppPath(), 'assets', 'app-icon.svg');
+const TRAY_ICON_PATH = path.join(app.getAppPath(), 'assets', 'tray-icon-template.svg');
 
 let tray = null;
 let windowRef = null;
@@ -678,18 +680,42 @@ async function collectProjectsSnapshot() {
   };
 }
 
-function iconDataUrl() {
-  const svg = Buffer.from(
+function loadIcon(iconPath, fallbackSvg) {
+  const image = nativeImage.createFromPath(iconPath);
+  if (!image.isEmpty()) {
+    return image;
+  }
+
+  const svg = Buffer.from(fallbackSvg).toString('base64');
+  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${svg}`);
+}
+
+function appIconImage() {
+  return loadIcon(
+    APP_ICON_PATH,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+      <rect x="64" y="64" width="896" height="896" rx="224" fill="#0d1730"/>
+      <rect x="200" y="212" width="624" height="600" rx="112" fill="#13233f"/>
+      <rect x="272" y="320" width="360" height="54" rx="27" fill="#35d5a7"/>
+      <rect x="272" y="450" width="360" height="54" rx="27" fill="#35d5a7"/>
+      <rect x="272" y="580" width="240" height="54" rx="27" fill="#35d5a7"/>
+      <circle cx="688" cy="605" r="96" fill="#ffb35c"/>
+    </svg>`
+  );
+}
+
+function trayIconImage() {
+  return loadIcon(
+    TRAY_ICON_PATH,
     `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
       <g fill="#000000">
-        <rect x="3" y="5" width="12" height="2.2" rx="1.1"/>
-        <rect x="3" y="10" width="12" height="2.2" rx="1.1"/>
+        <rect x="3" y="4.8" width="12" height="2.2" rx="1.1"/>
+        <rect x="3" y="9.9" width="12" height="2.2" rx="1.1"/>
         <rect x="3" y="15" width="8" height="2.2" rx="1.1"/>
         <circle cx="17.5" cy="16.1" r="2.2"/>
       </g>
     </svg>`
-  ).toString('base64');
-  return `data:image/svg+xml;base64,${svg}`;
+  );
 }
 
 function buildTrayMenu(projects) {
@@ -864,6 +890,7 @@ function createWindow() {
     title: APP_NAME,
     backgroundColor: '#0b1220',
     titleBarStyle: 'hiddenInset',
+    icon: appIconImage(),
     webPreferences: {
       preload: path.join(app.getAppPath(), 'src', 'preload.js'),
       contextIsolation: true,
@@ -1186,11 +1213,13 @@ app.whenReady().then(async () => {
   loadState();
   registerIpc();
 
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(appIconImage());
+  }
+
   windowRef = createWindow();
 
-  const trayImage = nativeImage
-    .createFromDataURL(iconDataUrl())
-    .resize({ width: 18, height: 18 });
+  const trayImage = trayIconImage().resize({ width: 18, height: 18 });
   trayImage.setTemplateImage(true);
   tray = new Tray(trayImage);
   if (process.platform === 'darwin') {
