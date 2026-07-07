@@ -160,7 +160,7 @@ function renderProject(project) {
   startBtn.disabled = project.status === 'running' || project.status === 'starting';
   stopBtn.disabled = project.status === 'stopped' || project.status === 'stopping';
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
-  homepageBtn.disabled = !(project.homepageUrl || project.openHomepageCommand);
+  homepageBtn.disabled = !(project.frontendUrl || project.homepageUrl || project.openHomepageCommand || project.projectDir);
   repositoryBtn.disabled = !project.projectDir;
 
   startBtn.addEventListener('click', async () => {

@@ -60,6 +60,7 @@ Every controllable project should be representable by a `control-panel.json` fil
 - `statusCommand`: command used to check whether the project is running
 - `restartCommand`: command used to restart the project
 - `openHomepageCommand`: command used to open the project homepage
+- `frontendUrl`: canonical local or deployed frontend entry URL, preferred for the homepage action
 - `homepageUrl`: canonical project homepage, preferred when opening the project page
 - `notes`: short operator note
 - `specUrl`: documentation or product spec URL for the project
@@ -77,7 +78,7 @@ Recommended precedence:
 - `scripts.restart` / `restartCommand`
 - `scripts.openHomepage` / `openHomepageCommand`
 
-If a manifest provides `homepageUrl`, use it before trying any heuristic lookup.
+If a manifest provides `frontendUrl`, use it before trying any heuristic lookup.
 
 ### 3.3 Script path convention
 
@@ -201,10 +202,12 @@ If the project has a `specUrl`, the AI should:
 
 When opening a project homepage, resolve in this order:
 
-1. `homepageUrl` or `homepage` in `control-panel.json`
-2. `homepage` or repository metadata in `package.json`
-3. Git remote inference
-4. Fallback to a best-effort repository home URL only when inference is ambiguous
+1. `frontendUrl`, `appUrl`, or `localUrl` in `control-panel.json`
+2. Project-authored homepage script
+3. Local frontend URL inference from the project
+4. `homepageUrl` or `homepage` in `control-panel.json`
+5. `homepage` or repository metadata in `package.json`
+6. Git remote inference
 
 If the spec is ambiguous:
 

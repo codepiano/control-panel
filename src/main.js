@@ -225,6 +225,21 @@ function resolveHomepageUrl(manifest) {
   return String(homepage).trim();
 }
 
+function resolveFrontendUrl(manifest) {
+  if (!manifest || typeof manifest !== 'object') {
+    return '';
+  }
+
+  const frontendUrl =
+    manifest.frontendUrl ||
+    manifest.appUrl ||
+    manifest.localUrl ||
+    manifest.siteUrl ||
+    manifest.devUrl ||
+    '';
+  return String(frontendUrl).trim();
+}
+
 function resolveRepositoryUrl(manifest) {
   if (!manifest || typeof manifest !== 'object') {
     return '';
@@ -298,6 +313,100 @@ function resolveRepositoryFromPackage(projectDir) {
   }
 
   return normalizeGitRemoteUrl(pkg.repository.url || '');
+}
+
+function readTextFile(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (error) {
+    return '';
+  }
+}
+
+function resolvePortFromText(filePath, patterns) {
+  const content = readTextFile(filePath);
+  if (!content) {
+    return 0;
+  }
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match && match[1]) {
+      const port = Number(match[1]);
+      if (Number.isFinite(port) && port > 0) {
+        return port;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function inferFrontendPort(projectDir) {
+  const portFiles = [
+    {
+      files: [
+        'vite.config.ts',
+        'vite.config.js',
+        'vite.config.mjs',
+        'vite.config.cjs',
+        'web/vite.config.ts',
+        'web/vite.config.js',
+        'web/vite.config.mjs',
+        'web/vite.config.cjs',
+        'apps/web/vite.config.ts',
+        'apps/web/vite.config.js',
+        'apps/web/vite.config.mjs',
+        'apps/web/vite.config.cjs',
+      ],
+      patterns: [/port\s*:\s*(\d{2,5})/],
+      fallback: 5173,
+    },
+    {
+      files: ['apps/desktop/src-tauri/tauri.conf.json', 'src-tauri/tauri.conf.json'],
+      patterns: [/\"devUrl\"\s*:\s*\"http:\/\/[^:]+:(\d{2,5})\"/],
+      fallback: 0,
+    },
+    {
+      files: ['scripts/dev-control.sh'],
+      patterns: [/WEB_PORT="\$\{[^:]+:-([0-9]{2,5})\}"/, /WEB_PORT='?\$\{[^:]+:-([0-9]{2,5})\}'?/],
+      fallback: 0,
+    },
+    {
+      files: ['next.config.js', 'next.config.mjs', 'next.config.ts', 'web/next.config.js', 'apps/web/next.config.js'],
+      patterns: [/port\s*:\s*(\d{2,5})/],
+      fallback: 3000,
+    },
+  ];
+
+  for (const entry of portFiles) {
+    for (const relativePath of entry.files) {
+      const fullPath = path.join(projectDir, relativePath);
+      if (!fs.existsSync(fullPath)) {
+        continue;
+      }
+
+      const resolvedPort = resolvePortFromText(fullPath, entry.patterns);
+      if (resolvedPort) {
+        return resolvedPort;
+      }
+
+      if (entry.fallback) {
+        return entry.fallback;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function inferFrontendUrl(projectDir) {
+  const port = inferFrontendPort(projectDir);
+  if (!port) {
+    return '';
+  }
+
+  return `http://127.0.0.1:${port}`;
 }
 
 function inferTechStack(projectDir, manifest) {
@@ -374,6 +483,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
       ''
   );
   const homepageUrl = resolveHomepageUrl(manifest);
+  const frontendUrl = resolveFrontendUrl(manifest);
   const repositoryUrl = resolveRepositoryUrl(manifest);
   const techStack = inferTechStack(projectDir, manifest);
 
@@ -387,6 +497,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     statusCommand,
     openHomepageCommand,
     homepageUrl,
+    frontendUrl,
     repositoryUrl,
     techStack,
     notes: String(manifest.notes || ''),
@@ -410,6 +521,7 @@ function buildProjectFromLegacyEntry(entry) {
     statusCommand: String(entry.statusCommand || ''),
     openHomepageCommand: String(entry.openHomepageCommand || ''),
     homepageUrl: String(entry.homepageUrl || entry.homepage || entry.projectUrl || entry.url || ''),
+    frontendUrl: String(entry.frontendUrl || entry.appUrl || entry.localUrl || entry.siteUrl || entry.devUrl || ''),
     repositoryUrl: String(entry.repositoryUrl || entry.repository || entry.repoUrl || entry.repo || ''),
     techStack: String(entry.techStack || entry.stack || entry.technology || entry.runtime || ''),
     notes: String(entry.notes || ''),
@@ -904,13 +1016,24 @@ async function openProjectHomepage(projectKey) {
     return;
   }
 
-  if (project.homepageUrl) {
-    await shell.openExternal(project.homepageUrl);
+  if (project.frontendUrl) {
+    await shell.openExternal(project.frontendUrl);
+    return;
+  }
+
+  const inferredFrontendUrl = inferFrontendUrl(project.projectDir);
+  if (inferredFrontendUrl) {
+    await shell.openExternal(inferredFrontendUrl);
     return;
   }
 
   if (project.openHomepageCommand) {
     await execCommand(project.openHomepageCommand, project.workingDirectory);
+    return;
+  }
+
+  if (project.homepageUrl) {
+    await shell.openExternal(project.homepageUrl);
     return;
   }
 
