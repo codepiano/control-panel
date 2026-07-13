@@ -50,9 +50,12 @@ project-root/
   "name": "API 服务",
   "id": "api",
   "workingDirectory": ".",
+  "initCommand": "./scripts/init.sh",
+  "installCommand": "./scripts/install.sh",
   "startCommand": "./scripts/start.sh",
   "stopCommand": "./scripts/stop.sh",
   "statusCommand": "./scripts/status.sh",
+  "uninstallCommand": "./scripts/uninstall.sh",
   "notes": "后端接口"
 }
 ```
@@ -62,9 +65,12 @@ project-root/
 - `name`: 展示名称
 - `id`: 唯一标识，可选
 - `workingDirectory`: 工作目录，默认是 manifest 所在目录
+- `initCommand`: 初始化命令，可选
+- `installCommand`: 安装依赖或插件命令，可选
 - `startCommand`: 启动命令
 - `stopCommand`: 停止命令，可选
 - `statusCommand`: 状态检测命令，返回码 `0` 表示运行中，可选
+- `uninstallCommand`: 卸载或清理命令，可选
 - `notes`: 备注，可选
 
 也支持旧的手工配置项 `projects`，但推荐以后统一切到扫描模式。
@@ -73,6 +79,6 @@ project-root/
 
 如果你想把这个仓库发给其他 AI 生成项目脚本，可以直接分享这份规范：
 
-- [Project Script Generation Spec](/Users/codepiano/Documents/控制面板/PROJECT_SCRIPT_GENERATION_SPEC.md)
+- [Project Script Generation Spec](./PROJECT_SCRIPT_GENERATION_SPEC.md)
 
 把这个链接连同对应项目仓库、`control-panel.json` 或 `specUrl` 一起发给对方即可。

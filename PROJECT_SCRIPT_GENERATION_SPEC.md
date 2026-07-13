@@ -1,6 +1,6 @@
 # Project Script Generation Spec
 
-Version: `1.0`
+Version: `1.1`
 
 This document is the canonical contract for any AI that generates or repairs project control scripts for a repository managed by Control Panel.
 
@@ -8,7 +8,7 @@ The goal is simple:
 
 - Given a project repository or project directory
 - Given the spec in this file
-- Generate the minimum set of scripts and manifest fields needed to start, stop, and inspect that project on macOS
+- Generate the minimum set of scripts and manifest fields needed to initialize, install, start, stop, inspect, and remove that project on macOS
 
 If anything in the repository conflicts with this spec, the repository can adapt, but the final output must still follow the rules below.
 
@@ -17,7 +17,7 @@ If anything in the repository conflicts with this spec, the repository can adapt
 This spec covers:
 
 - Discovering a project’s runtime entrypoints
-- Generating `start`, `stop`, `status`, and optional `restart` scripts
+- Generating `init`, `install`, `start`, `stop`, `status`, `restart`, `uninstall`, and optional homepage scripts
 - Respecting project-authored scripts when they already exist
 - Updating `control-panel.json`
 - Making scripts safe, repeatable, and executable on macOS
@@ -55,16 +55,27 @@ Every controllable project should be representable by a `control-panel.json` fil
 ### 3.2 Optional fields
 
 - `id`: stable unique identifier
+- `initCommand`: command used to initialize the project
+- `installCommand`: command used to install project dependencies or plugins
 - `startCommand`: command used to start the project
 - `stopCommand`: command used to stop the project
 - `statusCommand`: command used to check whether the project is running
 - `restartCommand`: command used to restart the project
+- `uninstallCommand`: command used to remove project-local runtime artifacts or unregister setup
 - `openHomepageCommand`: command used to open the project homepage
 - `frontendUrl`: canonical local or deployed frontend entry URL, preferred for the homepage action
 - `homepageUrl`: canonical project homepage, preferred when opening the project page
 - `notes`: short operator note
 - `specUrl`: documentation or product spec URL for the project
 - `scripts`: optional object mapping lifecycle names to relative script paths
+- `scripts.init`
+- `scripts.install`
+- `scripts.start`
+- `scripts.stop`
+- `scripts.status`
+- `scripts.restart`
+- `scripts.uninstall`
+- `scripts.openHomepage`
 
 ### 3.3 Resolution order
 
@@ -73,9 +84,12 @@ When both script paths and direct commands are available, the AI should prefer t
 Recommended precedence:
 
 - `scripts.start` / `startCommand`
+- `scripts.init` / `initCommand`
+- `scripts.install` / `installCommand`
 - `scripts.stop` / `stopCommand`
 - `scripts.status` / `statusCommand`
 - `scripts.restart` / `restartCommand`
+- `scripts.uninstall` / `uninstallCommand`
 - `scripts.openHomepage` / `openHomepageCommand`
 
 If a manifest provides `frontendUrl`, use it before trying any heuristic lookup.
@@ -87,9 +101,12 @@ If the manifest uses script paths, they should be relative to `workingDirectory`
 Recommended convention:
 
 - `scripts/start.sh`
+- `scripts/init.sh`
+- `scripts/install.sh`
 - `scripts/stop.sh`
 - `scripts/status.sh`
 - `scripts/restart.sh`
+- `scripts/uninstall.sh`
 - `scripts/open-homepage.sh`
 
 ## 4. Discovery Rules
@@ -119,7 +136,32 @@ If the repository already exposes a dedicated startup script, use it rather than
 - Avoid destructive commands unless the user explicitly requested cleanup behavior
 - Do not delete project files outside the control-panel script scope
 
-### 5.2 Start script
+### 5.2 Init script
+
+The init script should prepare a fresh checkout for first use.
+
+Typical init work includes:
+
+- Creating local config files
+- Bootstrapping environment variables
+- Generating folders, databases, or caches the project expects
+- Delegating to the project’s one-time setup command
+
+The init script should be safe to rerun and should not start the service unless the project explicitly treats setup and start as the same action.
+
+### 5.3 Install script
+
+The install script should install dependencies or plugins.
+
+Typical install work includes:
+
+- Running the package manager install step
+- Fetching language-specific dependencies
+- Preparing vendored assets needed before startup
+
+The install script should not start the service. It should be idempotent where practical and should avoid destructive cleanup.
+
+### 5.4 Start script
 
 The start script should:
 
@@ -128,7 +170,7 @@ The start script should:
 - Print a clear message on success
 - Fail with a nonzero exit code if startup fails
 
-### 5.3 Stop script
+### 5.5 Stop script
 
 The stop script should:
 
@@ -138,7 +180,7 @@ The stop script should:
 - Be safe to run multiple times
 - Exit `0` when the service is already stopped unless the project explicitly requires a different behavior
 
-### 5.4 Status script
+### 5.6 Status script
 
 The status script should:
 
@@ -147,13 +189,25 @@ The status script should:
 - Avoid false positives from unrelated processes
 - Prefer a direct PID, socket, lock file, or service-specific check over generic `ps` matching
 
-### 5.5 Restart script
+### 5.7 Restart script
 
 If generated, the restart script should:
 
 - Call stop then start
 - Preserve error handling
 - Exit nonzero if either step fails
+
+### 5.8 Uninstall script
+
+The uninstall script should remove project-local runtime artifacts or unregister project-specific setup when the project supports that flow.
+
+Typical uninstall work includes:
+
+- Removing generated config files
+- Cleaning up local caches or temp files created by the install/init flow
+- Reversing project-owned registrations
+
+The uninstall script should be safe to run when the project is already absent or partially removed. It should fail only when the project intentionally requires manual intervention.
 
 ## 6. Heuristics by Project Type
 
@@ -267,10 +321,14 @@ Before finalizing, the AI should verify:
 project-root/
   control-panel.json
   scripts/
+    init.sh
+    install.sh
     start.sh
     stop.sh
     status.sh
     restart.sh   # optional
+    uninstall.sh
+    open-homepage.sh   # optional
 ```
 
 ## 11. Example `control-panel.json`
@@ -280,9 +338,12 @@ project-root/
   "id": "api",
   "name": "API 服务",
   "workingDirectory": ".",
+  "initCommand": "./scripts/init.sh",
+  "installCommand": "./scripts/install.sh",
   "startCommand": "./scripts/start.sh",
   "stopCommand": "./scripts/stop.sh",
   "statusCommand": "./scripts/status.sh",
+  "uninstallCommand": "./scripts/uninstall.sh",
   "homepageUrl": "https://example.com/project",
   "notes": "本地开发服务",
   "specUrl": "https://example.com/project-spec"
@@ -329,6 +390,34 @@ set -euo pipefail
 open "https://example.com/project"
 ```
 
+### 12.5 `scripts/init.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Initializing API service..."
+```
+
+### 12.6 `scripts/install.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Installing dependencies..."
+npm install
+```
+
+### 12.7 `scripts/uninstall.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Removing local project artifacts..."
+```
+
 ## 13. Clarification Policy
 
 Ask a clarification question only when:
@@ -346,8 +435,10 @@ A generated project should satisfy all of these:
 
 - The project is discoverable from `control-panel.json`
 - The start script actually starts the intended service
+- The init and install scripts prepare the project without starting it unless explicitly intended
 - The stop script can stop it cleanly
 - The status script can distinguish running from not running
+- The uninstall script only removes project-owned artifacts
 - The manifest points to the scripts correctly
 - The spec link, if present, is preserved in the manifest
 - The homepage script opens the intended project page
