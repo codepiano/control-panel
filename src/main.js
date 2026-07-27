@@ -9,7 +9,7 @@ const DEFAULT_REFRESH_MS = 5000;
 const DEFAULT_SCAN_DEPTH = 1;
 const DEFAULT_MANIFEST_NAME = 'control-panel.json';
 const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
-const APP_ICON_PATH = path.join(app.getAppPath(), 'assets', 'app-icon.svg');
+const APP_ICON_PATH = path.join(app.getAppPath(), 'assets', 'app-icon.png');
 const TRAY_ICON_PATH = path.join(app.getAppPath(), 'assets', 'tray-icon-template.svg');
 
 let tray = null;
