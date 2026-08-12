@@ -38,7 +38,8 @@ body {
 .window-bar {
   height: 40px;
   margin: 0 0 12px;
-  padding: 0 12px;
+  /* hiddenInset leaves the native traffic lights over the web content. */
+  padding: 0 12px 0 112px;
   display: flex;
   align-items: center;
   justify-content: space-between;
