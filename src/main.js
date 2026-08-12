@@ -6,9 +6,12 @@ const { exec, spawn } = require('child_process');
 const APP_NAME = 'Control Panel';
 const CONFIG_ENV = 'CONTROL_PANEL_CONFIG';
 const DEFAULT_REFRESH_MS = 5000;
-const DEFAULT_SCAN_DEPTH = 4;
+const STATUS_COMMAND_TIMEOUT_MS = 8000;
+const DEFAULT_SCAN_DEPTH = 1;
 const DEFAULT_MANIFEST_NAME = 'control-panel.json';
 const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
+const APP_ICON_PATH = path.join(app.getAppPath(), 'assets', 'app-icon.png');
+const TRAY_ICON_PATH = path.join(app.getAppPath(), 'assets', 'tray-icon-template.svg');
 
 let tray = null;
 let windowRef = null;
@@ -58,6 +61,65 @@ function normalizeConfig(config) {
     },
     projects: Array.isArray(base.projects) ? base.projects : [],
   };
+}
+
+function cleanText(value, maxLength, fieldName, { required = false } = {}) {
+  const text = String(value || '').trim();
+  if (text.includes('\0') || /[\r\n]/.test(text)) {
+    throw new Error(`${fieldName}不能包含换行或空字符`);
+  }
+  if (required && !text) {
+    throw new Error(`${fieldName}不能为空`);
+  }
+  if (text.length > maxLength) {
+    throw new Error(`${fieldName}不能超过 ${maxLength} 个字符`);
+  }
+  return text;
+}
+
+function validateFrontendUrl(value, portValue) {
+  const text = cleanText(value, 500, '访问地址');
+  const portText = String(portValue || '').trim();
+  if (!text && !portText) {
+    return '';
+  }
+  if (!text) {
+    throw new Error('填写端口时也需要填写访问地址');
+  }
+
+  let url;
+  try {
+    url = new URL(text);
+  } catch (error) {
+    throw new Error('访问地址必须是完整的 http 或 https URL');
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) {
+    throw new Error('访问地址必须使用 http 或 https，并包含主机名');
+  }
+  if (portText && (!/^\d+$/.test(portText) || Number(portText) < 1 || Number(portText) > 65535)) {
+    throw new Error('端口必须介于 1 和 65535 之间');
+  }
+  if (portText) {
+    url.port = portText;
+  }
+  if (url.port && (Number(url.port) < 1 || Number(url.port) > 65535)) {
+    throw new Error('端口必须介于 1 和 65535 之间');
+  }
+  return url.toString().replace(/\/$/, '');
+}
+
+function validateProjectPresentation(input) {
+  return {
+    name: cleanText(input.name, 80, '项目名称', { required: true }),
+    frontendUrl: validateFrontendUrl(input.frontendUrl, input.frontendPort),
+    notes: cleanText(input.notes, 500, '备注'),
+  };
+}
+
+function writeProjectManifest(manifestPath, manifest) {
+  const tempPath = `${manifestPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(manifest, null, 2) + '\n');
+  fs.renameSync(tempPath, manifestPath);
 }
 
 function readJson(filePath, fallback) {
@@ -112,6 +174,14 @@ function persistState() {
   writeJson(getStatePath(), { projects: projectState });
 }
 
+function getUsageCount(projectKey) {
+  return Number(projectState[projectKey]?.usageCount || 0);
+}
+
+function getLastStartedAt(projectKey) {
+  return String(projectState[projectKey]?.lastStartedAt || '');
+}
+
 function normalizeCommandResult(result) {
   return {
     code: typeof result.code === 'number' ? result.code : 1,
@@ -127,15 +197,21 @@ function execCommand(command, cwd) {
       return;
     }
 
-    exec(command, { cwd, shell: '/bin/zsh', env: process.env }, (error, stdout, stderr) => {
-      resolve(
-        normalizeCommandResult({
-          code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
-          stdout,
-          stderr,
-        })
-      );
-    });
+    exec(
+      command,
+      { cwd, shell: '/bin/zsh', env: process.env, timeout: STATUS_COMMAND_TIMEOUT_MS },
+      (error, stdout, stderr) => {
+        resolve(
+          normalizeCommandResult({
+            code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+            stdout,
+            stderr: error?.killed
+              ? `${stderr || ''}\n命令超时（${STATUS_COMMAND_TIMEOUT_MS / 1000} 秒）`.trim()
+              : stderr,
+          })
+        );
+      }
+    );
   });
 }
 
@@ -217,6 +293,38 @@ function resolveHomepageUrl(manifest) {
   return String(homepage).trim();
 }
 
+function resolveFrontendUrl(manifest) {
+  if (!manifest || typeof manifest !== 'object') {
+    return '';
+  }
+
+  const frontendUrl =
+    manifest.frontendUrl ||
+    manifest.appUrl ||
+    manifest.localUrl ||
+    manifest.siteUrl ||
+    manifest.devUrl ||
+    '';
+  return String(frontendUrl).trim();
+}
+
+function resolveRepositoryUrl(manifest) {
+  if (!manifest || typeof manifest !== 'object') {
+    return '';
+  }
+
+  const repository = manifest.repositoryUrl || manifest.repository || manifest.repoUrl || manifest.repo || '';
+  if (typeof repository === 'string') {
+    return normalizeGitRemoteUrl(repository);
+  }
+
+  if (repository && typeof repository === 'object') {
+    return normalizeGitRemoteUrl(repository.url || '');
+  }
+
+  return '';
+}
+
 function normalizeGitRemoteUrl(remoteUrl) {
   const value = String(remoteUrl || '').trim();
   if (!value) {
@@ -251,6 +359,156 @@ function resolveHomepageFromPackage(projectDir) {
 
   const homepage = pkg.homepage || pkg.repository?.url || '';
   return normalizeGitRemoteUrl(homepage);
+}
+
+function resolveRepositoryFromPackage(projectDir) {
+  const packagePath = path.join(projectDir, 'package.json');
+  if (!fs.existsSync(packagePath)) {
+    return '';
+  }
+
+  const pkg = readJson(packagePath, null);
+  if (!pkg || typeof pkg !== 'object') {
+    return '';
+  }
+
+  if (!pkg.repository) {
+    return '';
+  }
+
+  if (typeof pkg.repository === 'string') {
+    return normalizeGitRemoteUrl(pkg.repository);
+  }
+
+  return normalizeGitRemoteUrl(pkg.repository.url || '');
+}
+
+function readTextFile(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (error) {
+    return '';
+  }
+}
+
+function resolvePortFromText(filePath, patterns) {
+  const content = readTextFile(filePath);
+  if (!content) {
+    return 0;
+  }
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match && match[1]) {
+      const port = Number(match[1]);
+      if (Number.isFinite(port) && port > 0) {
+        return port;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function inferFrontendPort(projectDir) {
+  const portFiles = [
+    {
+      files: [
+        'vite.config.ts',
+        'vite.config.js',
+        'vite.config.mjs',
+        'vite.config.cjs',
+        'web/vite.config.ts',
+        'web/vite.config.js',
+        'web/vite.config.mjs',
+        'web/vite.config.cjs',
+        'apps/web/vite.config.ts',
+        'apps/web/vite.config.js',
+        'apps/web/vite.config.mjs',
+        'apps/web/vite.config.cjs',
+      ],
+      patterns: [/port\s*:\s*(\d{2,5})/],
+      fallback: 5173,
+    },
+    {
+      files: ['apps/desktop/src-tauri/tauri.conf.json', 'src-tauri/tauri.conf.json'],
+      patterns: [/\"devUrl\"\s*:\s*\"http:\/\/[^:]+:(\d{2,5})\"/],
+      fallback: 0,
+    },
+    {
+      files: ['scripts/dev-control.sh'],
+      patterns: [/WEB_PORT="\$\{[^:]+:-([0-9]{2,5})\}"/, /WEB_PORT='?\$\{[^:]+:-([0-9]{2,5})\}'?/],
+      fallback: 0,
+    },
+    {
+      files: ['next.config.js', 'next.config.mjs', 'next.config.ts', 'web/next.config.js', 'apps/web/next.config.js'],
+      patterns: [/port\s*:\s*(\d{2,5})/],
+      fallback: 3000,
+    },
+  ];
+
+  for (const entry of portFiles) {
+    for (const relativePath of entry.files) {
+      const fullPath = path.join(projectDir, relativePath);
+      if (!fs.existsSync(fullPath)) {
+        continue;
+      }
+
+      const resolvedPort = resolvePortFromText(fullPath, entry.patterns);
+      if (resolvedPort) {
+        return resolvedPort;
+      }
+
+      if (entry.fallback) {
+        return entry.fallback;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function inferFrontendUrl(projectDir) {
+  const port = inferFrontendPort(projectDir);
+  if (!port) {
+    return '';
+  }
+
+  return `http://127.0.0.1:${port}`;
+}
+
+function inferTechStack(projectDir, manifest) {
+  const explicit = String(manifest?.techStack || manifest?.stack || manifest?.technology || manifest?.runtime || '').trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const markers = [
+    { file: 'package.json', label: 'Node.js' },
+    { file: 'pnpm-lock.yaml', label: 'Node.js' },
+    { file: 'yarn.lock', label: 'Node.js' },
+    { file: 'package-lock.json', label: 'Node.js' },
+    { file: 'pyproject.toml', label: 'Python' },
+    { file: 'requirements.txt', label: 'Python' },
+    { file: 'Pipfile', label: 'Python' },
+    { file: 'go.mod', label: 'Go' },
+    { file: 'Cargo.toml', label: 'Rust' },
+    { file: 'composer.json', label: 'PHP' },
+    { file: 'Gemfile', label: 'Ruby' },
+    { file: 'pom.xml', label: 'Java' },
+    { file: 'build.gradle', label: 'Java' },
+    { file: 'build.gradle.kts', label: 'Java' },
+    { file: 'Cargo.lock', label: 'Rust' },
+    { file: 'Makefile', label: 'Native' },
+  ];
+
+  for (const marker of markers) {
+    if (fs.existsSync(path.join(projectDir, marker.file))) {
+      return marker.label;
+    }
+  }
+
+  return '未识别';
 }
 
 async function resolveHomepageFromGit(projectDir) {
@@ -293,6 +551,9 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
       ''
   );
   const homepageUrl = resolveHomepageUrl(manifest);
+  const frontendUrl = resolveFrontendUrl(manifest);
+  const repositoryUrl = resolveRepositoryUrl(manifest);
+  const techStack = inferTechStack(projectDir, manifest);
 
   return {
     key: `manifest:${manifestPath}`,
@@ -304,6 +565,9 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     statusCommand,
     openHomepageCommand,
     homepageUrl,
+    frontendUrl,
+    repositoryUrl,
+    techStack,
     notes: String(manifest.notes || ''),
     source,
     root,
@@ -325,6 +589,9 @@ function buildProjectFromLegacyEntry(entry) {
     statusCommand: String(entry.statusCommand || ''),
     openHomepageCommand: String(entry.openHomepageCommand || ''),
     homepageUrl: String(entry.homepageUrl || entry.homepage || entry.projectUrl || entry.url || ''),
+    frontendUrl: String(entry.frontendUrl || entry.appUrl || entry.localUrl || entry.siteUrl || entry.devUrl || ''),
+    repositoryUrl: String(entry.repositoryUrl || entry.repository || entry.repoUrl || entry.repo || ''),
+    techStack: String(entry.techStack || entry.stack || entry.technology || entry.runtime || ''),
     notes: String(entry.notes || ''),
     source: 'legacy',
     root: workingDirectory,
@@ -341,21 +608,13 @@ function findProjectManifests(root, manifestName, maxDepth) {
     return results;
   }
 
-  function walk(currentDir, depth) {
-    if (depth > maxDepth) {
-      return;
-    }
-
+  const candidateDirs = [rootPath];
+  if (maxDepth > 0) {
     let entries = [];
     try {
-      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      entries = fs.readdirSync(rootPath, { withFileTypes: true });
     } catch (error) {
-      return;
-    }
-
-    const manifestPath = path.join(currentDir, manifestName);
-    if (fs.existsSync(manifestPath) && fs.statSync(manifestPath).isFile()) {
-      results.push(manifestPath);
+      entries = [];
     }
 
     for (const entry of entries) {
@@ -367,11 +626,17 @@ function findProjectManifests(root, manifestName, maxDepth) {
         continue;
       }
 
-      walk(path.join(currentDir, entry.name), depth + 1);
+      candidateDirs.push(path.join(rootPath, entry.name));
     }
   }
 
-  walk(rootPath, 0);
+  for (const currentDir of candidateDirs) {
+    const manifestPath = path.join(currentDir, manifestName);
+    if (fs.existsSync(manifestPath) && fs.statSync(manifestPath).isFile()) {
+      results.push(manifestPath);
+    }
+  }
+
   return results;
 }
 
@@ -414,7 +679,20 @@ function discoverProjects(config) {
     discovered.push(project);
   }
 
-  discovered.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  discovered.sort((a, b) => {
+    const usageGap = getUsageCount(b.key) - getUsageCount(a.key);
+    if (usageGap !== 0) {
+      return usageGap;
+    }
+
+    const lastStartedA = getLastStartedAt(a.key);
+    const lastStartedB = getLastStartedAt(b.key);
+    if (lastStartedA !== lastStartedB) {
+      return lastStartedB.localeCompare(lastStartedA);
+    }
+
+    return a.name.localeCompare(b.name, 'zh-Hans-CN');
+  });
   return discovered;
 }
 
@@ -448,15 +726,18 @@ async function getProjectStatus(project) {
 async function collectProjectsSnapshot() {
   const config = loadConfig();
   const discovered = discoverProjects(config);
-  const snapshot = [];
-
-  for (const project of discovered) {
-    const status = await getProjectStatus(project);
-    snapshot.push({
-      ...project,
-      ...status,
-    });
-  }
+  const snapshot = await Promise.all(
+    discovered.map(async (project) => {
+      const status = await getProjectStatus(project);
+      const state = projectState[project.key] || {};
+      return {
+        ...project,
+        usageCount: Number(state.usageCount || 0),
+        lastStartedAt: String(state.lastStartedAt || ''),
+        ...status,
+      };
+    })
+  );
 
   projectsCache = snapshot;
   return {
@@ -465,62 +746,146 @@ async function collectProjectsSnapshot() {
   };
 }
 
-function iconDataUrl() {
-  const svg = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-      <rect width="128" height="128" rx="28" fill="#111827"/>
-      <path d="M28 40h72v12H28zM28 58h72v12H28zM28 76h48v12H28z" fill="#f9fafb"/>
-      <circle cx="92" cy="82" r="12" fill="#22c55e"/>
+function loadIcon(iconPath, fallbackSvg) {
+  const image = nativeImage.createFromPath(iconPath);
+  if (!image.isEmpty()) {
+    return image;
+  }
+
+  const svg = Buffer.from(fallbackSvg).toString('base64');
+  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${svg}`);
+}
+
+function appIconImage() {
+  return loadIcon(
+    APP_ICON_PATH,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+      <rect x="64" y="64" width="896" height="896" rx="224" fill="#0d1730"/>
+      <rect x="200" y="212" width="624" height="600" rx="112" fill="#13233f"/>
+      <rect x="272" y="320" width="360" height="54" rx="27" fill="#35d5a7"/>
+      <rect x="272" y="450" width="360" height="54" rx="27" fill="#35d5a7"/>
+      <rect x="272" y="580" width="240" height="54" rx="27" fill="#35d5a7"/>
+      <circle cx="688" cy="605" r="96" fill="#ffb35c"/>
     </svg>`
-  ).toString('base64');
-  return `data:image/svg+xml;base64,${svg}`;
+  );
+}
+
+function trayIconImage() {
+  return loadIcon(
+    TRAY_ICON_PATH,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+      <g fill="#000000">
+        <rect x="3" y="4.8" width="12" height="2.2" rx="1.1"/>
+        <rect x="3" y="9.9" width="12" height="2.2" rx="1.1"/>
+        <rect x="3" y="15" width="8" height="2.2" rx="1.1"/>
+        <circle cx="17.5" cy="16.1" r="2.2"/>
+      </g>
+    </svg>`
+  );
 }
 
 function buildTrayMenu(projects) {
-  const projectSections = projects.flatMap((project) => [
-    { type: 'separator' },
-    { label: `${project.name}  (${project.status || 'stopped'})`, enabled: false },
-    {
-      label: 'Start',
-      click: () => startProject(project.key),
-    },
-    {
-      label: 'Stop',
-      click: () => stopProject(project.key),
-    },
-    {
-      label: 'Restart',
-      click: () => restartProject(project.key),
-    },
-    {
-      label: 'Open Folder',
-      click: () => shell.openPath(project.workingDirectory),
-    },
-  ]);
+  const statusOrder = { running: 0, starting: 1, error: 2, stopping: 3, stopped: 4 };
+  const statusBadge = {
+    running: '●',
+    starting: '◐',
+    stopping: '◑',
+    error: '!',
+    stopped: '○',
+  };
+  const orderedProjects = [...projects].sort((a, b) => {
+    const statusGap = (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99);
+    if (statusGap !== 0) {
+      return statusGap;
+    }
+
+    return a.name.localeCompare(b.name, 'zh-Hans-CN');
+  });
+  const runningCount = orderedProjects.filter((project) => project.status === 'running').length;
+  const projectItems = orderedProjects.map((project) => ({
+    label: `${statusBadge[project.status] || '○'} ${project.name}`,
+    submenu: [
+      { label: `状态: ${project.status || 'stopped'}`, enabled: false },
+      ...(project.notes ? [{ label: project.notes, enabled: false }] : []),
+      { type: 'separator' },
+      {
+        label: '启动',
+        enabled: !(project.status === 'running' || project.status === 'starting'),
+        click: () => startProject(project.key),
+      },
+      {
+        label: '停止',
+        enabled: !(project.status === 'stopped' || project.status === 'stopping'),
+        click: () => stopProject(project.key),
+      },
+      {
+        label: '重启',
+        enabled: !(project.status === 'starting' || project.status === 'stopping'),
+        click: () => restartProject(project.key),
+      },
+      { type: 'separator' },
+      {
+        label: '打开主页',
+        enabled: Boolean(project.homepageUrl || project.openHomepageCommand || project.projectDir),
+        click: () => openProjectHomepage(project.key),
+      },
+      {
+        label: '打开仓库',
+        enabled: Boolean(project.repositoryUrl || project.projectDir),
+        click: () => openProjectRepository(project.key),
+      },
+      {
+        label: '打开目录',
+        enabled: Boolean(project.projectDir || project.workingDirectory),
+        click: () => shell.openPath(project.projectDir || project.workingDirectory),
+      },
+    ],
+  }));
 
   return Menu.buildFromTemplate([
-    { label: APP_NAME, enabled: false },
+    { label: `${APP_NAME}  ${runningCount}/${orderedProjects.length}`, enabled: false },
     { type: 'separator' },
-    ...projectSections,
-    ...(projects.length ? [{ type: 'separator' }] : []),
     {
-      label: 'Open Dashboard',
+      label: '打开面板',
       click: showWindow,
     },
     {
-      label: 'Refresh',
+      label: '刷新状态',
       click: () => refreshAll().catch(() => {}),
     },
     {
-      label: 'Open Config File',
+      label: '只看运行中',
+      enabled: runningCount > 0,
+      submenu:
+        runningCount > 0
+          ? orderedProjects
+              .filter((project) => project.status === 'running')
+              .map((project) => ({
+                label: project.name,
+                click: () => showWindow(),
+              }))
+          : [{ label: '当前没有运行中的项目', enabled: false }],
+    },
+    ...(projectItems.length
+      ? [
+          { type: 'separator' },
+          {
+            label: `项目 (${projectItems.length})`,
+            submenu: projectItems,
+          },
+        ]
+      : []),
+    { type: 'separator' },
+    {
+      label: '打开配置文件',
       click: () => shell.openPath(getConfigPath()),
     },
     {
-      label: 'Open Config Folder',
+      label: '打开配置目录',
       click: () => shell.openPath(path.dirname(getConfigPath())),
     },
     {
-      label: 'Add Project Root',
+      label: '添加项目根目录',
       click: async () => {
         const selected = await pickProjectRoots();
         if (selected.length > 0) {
@@ -535,7 +900,7 @@ function buildTrayMenu(projects) {
     },
     { type: 'separator' },
     {
-      label: 'Quit',
+      label: '退出',
       click: () => app.quit(),
     },
   ]);
@@ -591,6 +956,7 @@ function createWindow() {
     title: APP_NAME,
     backgroundColor: '#0b1220',
     titleBarStyle: 'hiddenInset',
+    icon: appIconImage(),
     webPreferences: {
       preload: path.join(app.getAppPath(), 'src', 'preload.js'),
       contextIsolation: true,
@@ -607,12 +973,6 @@ function createWindow() {
       projectCount: projectsCache.length,
       config: currentConfig,
     });
-  });
-
-  win.on('blur', () => {
-    if (process.platform === 'darwin') {
-      win.hide();
-    }
   });
 
   return win;
@@ -648,10 +1008,14 @@ async function startProject(projectKey) {
 
   try {
     const pid = await launchDetached(project.startCommand, project.workingDirectory);
+    const usageCount = getUsageCount(project.key) + 1;
+    const lastStartedAt = new Date().toISOString();
     projectState[project.key] = {
       pid,
       status: 'running',
       lastOutput: `Started at ${new Date().toLocaleString()}`,
+      usageCount,
+      lastStartedAt,
     };
     persistState();
   } catch (error) {
@@ -743,13 +1107,24 @@ async function openProjectHomepage(projectKey) {
     return;
   }
 
-  if (project.homepageUrl) {
-    await shell.openExternal(project.homepageUrl);
+  if (project.frontendUrl) {
+    await shell.openExternal(project.frontendUrl);
+    return;
+  }
+
+  const inferredFrontendUrl = inferFrontendUrl(project.projectDir);
+  if (inferredFrontendUrl) {
+    await shell.openExternal(inferredFrontendUrl);
     return;
   }
 
   if (project.openHomepageCommand) {
     await execCommand(project.openHomepageCommand, project.workingDirectory);
+    return;
+  }
+
+  if (project.homepageUrl) {
+    await shell.openExternal(project.homepageUrl);
     return;
   }
 
@@ -771,6 +1146,38 @@ async function openProjectHomepage(projectKey) {
     title: APP_NAME,
     message: '无法确定项目主页',
     detail: '请在 control-panel.json 中配置 homepageUrl 或 openHomepageCommand，或者在 package.json / git remote 中提供可推断的主页地址。',
+  });
+}
+
+async function openProjectRepository(projectKey) {
+  const project = findProjectByKey(projectKey);
+  if (!project) {
+    return;
+  }
+
+  if (project.repositoryUrl) {
+    await shell.openExternal(project.repositoryUrl);
+    return;
+  }
+
+  const packageRepository = resolveRepositoryFromPackage(project.projectDir);
+  if (packageRepository) {
+    await shell.openExternal(packageRepository);
+    return;
+  }
+
+  const gitRepository = await resolveHomepageFromGit(project.projectDir);
+  if (gitRepository) {
+    await shell.openExternal(gitRepository);
+    return;
+  }
+
+  await dialog.showMessageBox({
+    type: 'info',
+    buttons: ['OK'],
+    title: APP_NAME,
+    message: '无法确定项目仓库',
+    detail: '请在 control-panel.json 中配置 repositoryUrl，或者在 package.json / git remote 中提供可推断的仓库地址。',
   });
 }
 
@@ -832,6 +1239,11 @@ function registerIpc() {
     return true;
   });
 
+  ipcMain.handle('open-project-repository', async (_event, projectKey) => {
+    await openProjectRepository(projectKey);
+    return true;
+  });
+
   ipcMain.handle('open-config-folder', async () => {
     await shell.openPath(path.dirname(getConfigPath()));
     return true;
@@ -856,6 +1268,27 @@ function registerIpc() {
     return currentConfig;
   });
 
+  ipcMain.handle('save-project-presentation', async (_event, projectKey, input) => {
+    const project = findProjectByKey(String(projectKey || ''));
+    if (!project || !project.manifestPath) {
+      throw new Error('项目不存在，请刷新后重试');
+    }
+
+    const manifest = parseManifest(project.manifestPath);
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+      throw new Error('项目配置文件无法读取，请修复 JSON 后重试');
+    }
+
+    const presentation = validateProjectPresentation(input || {});
+    const nextManifest = { ...manifest, ...presentation };
+    if (!presentation.frontendUrl) {
+      delete nextManifest.frontendUrl;
+    }
+    writeProjectManifest(project.manifestPath, nextManifest);
+    await refreshAll();
+    return true;
+  });
+
   ipcMain.handle('set-open-at-login', async (_event, enable) => {
     return toggleAutoLaunch(Boolean(enable));
   });
@@ -867,10 +1300,18 @@ app.whenReady().then(async () => {
   loadState();
   registerIpc();
 
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(appIconImage());
+  }
+
   windowRef = createWindow();
 
-  const trayImage = nativeImage.createFromDataURL(iconDataUrl());
+  const trayImage = trayIconImage().resize({ width: 18, height: 18 });
+  trayImage.setTemplateImage(true);
   tray = new Tray(trayImage);
+  if (process.platform === 'darwin') {
+    tray.setTitle('CP');
+  }
   tray.setToolTip(APP_NAME);
   tray.on('click', () => {
     if (windowRef && windowRef.isVisible()) {

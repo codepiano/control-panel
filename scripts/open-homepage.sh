@@ -32,6 +32,10 @@ resolve_homepage_from_manifest() {
   read_json_field "$MANIFEST_FILE" 'data.homepageUrl || data.homepage || data.projectUrl || data.url || ""'
 }
 
+resolve_frontend_from_manifest() {
+  read_json_field "$MANIFEST_FILE" 'data.frontendUrl || data.appUrl || data.localUrl || data.siteUrl || data.devUrl || ""'
+}
+
 resolve_homepage_from_package() {
   read_json_field "$PACKAGE_FILE" 'data.homepage || (data.repository && (typeof data.repository === "string" ? data.repository : data.repository.url)) || ""'
 }
@@ -51,7 +55,8 @@ resolve_homepage_from_git() {
   esac
 }
 
-HOMEPAGE_URL="$(resolve_homepage_from_manifest)"
+HOMEPAGE_URL="$(resolve_frontend_from_manifest)"
+[[ -z "$HOMEPAGE_URL" ]] && HOMEPAGE_URL="$(resolve_homepage_from_manifest)"
 [[ -z "$HOMEPAGE_URL" ]] && HOMEPAGE_URL="$(resolve_homepage_from_package)"
 [[ -z "$HOMEPAGE_URL" ]] && HOMEPAGE_URL="$(resolve_homepage_from_git)"
 

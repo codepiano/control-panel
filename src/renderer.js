@@ -2,7 +2,6 @@ const api = window.controlPanel;
 
 const els = {
   list: document.getElementById('projectList'),
-  summary: document.getElementById('summary'),
   runningSummary: document.getElementById('runningSummary'),
   rootsCount: document.getElementById('rootsCount'),
   configPath: document.getElementById('configPath'),
@@ -15,6 +14,13 @@ const els = {
   loginToggle: document.getElementById('loginToggle'),
   settingsModal: document.getElementById('settingsModal'),
   closeSettingsBtn: document.getElementById('closeSettingsBtn'),
+  projectEditorModal: document.getElementById('projectEditorModal'),
+  projectEditorForm: document.getElementById('projectEditorForm'),
+  projectEditorHint: document.getElementById('projectEditorHint'),
+  projectEditorError: document.getElementById('projectEditorError'),
+  closeProjectEditorBtn: document.getElementById('closeProjectEditorBtn'),
+  cancelProjectEditorBtn: document.getElementById('cancelProjectEditorBtn'),
+  saveProjectEditorBtn: document.getElementById('saveProjectEditorBtn'),
   rootInput: document.getElementById('rootInput'),
   browseRootBtn: document.getElementById('browseRootBtn'),
   addRootBtn: document.getElementById('addRootBtn'),
@@ -24,6 +30,8 @@ const els = {
 
 let latestPayload = null;
 let runningOnly = false;
+let refreshInFlight = false;
+let editingProject = null;
 
 function formatTimestamp(isoString) {
   if (!isoString) {
@@ -59,6 +67,61 @@ function closeSettings() {
   els.settingsModal.setAttribute('aria-hidden', 'true');
 }
 
+function setProjectEditorError(message = '') {
+  els.projectEditorError.textContent = message;
+  els.projectEditorError.classList.toggle('hidden', !message);
+}
+
+function setFormValue(name, value) {
+  els.projectEditorForm.elements[name].value = value || '';
+}
+
+function splitFrontendUrl(value) {
+  if (!value) {
+    return { address: '', port: '' };
+  }
+
+  try {
+    const url = new URL(value);
+    const port = url.port;
+    url.port = '';
+    return { address: url.toString().replace(/\/$/, ''), port };
+  } catch (error) {
+    return { address: value, port: '' };
+  }
+}
+
+function openProjectEditor(project) {
+  editingProject = project;
+  setProjectEditorError();
+  const frontend = splitFrontendUrl(project.frontendUrl);
+  els.projectEditorHint.textContent = `${project.manifestPath} · 修改会直接保存到项目自身的 control-panel.json。`;
+  setFormValue('name', project.name);
+  setFormValue('frontendUrl', frontend.address);
+  setFormValue('frontendPort', frontend.port);
+  setFormValue('notes', project.notes);
+  els.projectEditorModal.classList.remove('hidden');
+  els.projectEditorModal.setAttribute('aria-hidden', 'false');
+  els.projectEditorForm.elements.name.focus();
+}
+
+function closeProjectEditor() {
+  editingProject = null;
+  setProjectEditorError();
+  els.projectEditorModal.classList.add('hidden');
+  els.projectEditorModal.setAttribute('aria-hidden', 'true');
+}
+
+function projectEditorData() {
+  const form = els.projectEditorForm.elements;
+  return {
+    name: form.name.value,
+    frontendUrl: form.frontendUrl.value,
+    frontendPort: form.frontendPort.value,
+    notes: form.notes.value,
+  };
+}
+
 function renderRootRow(root) {
   const row = document.createElement('div');
   row.className = 'root-row';
@@ -70,7 +133,7 @@ function renderRootRow(root) {
   title.textContent = root;
 
   const subtitle = document.createElement('span');
-  subtitle.textContent = '加入后会递归扫描其中的 control-panel.json';
+  subtitle.textContent = '只检查根目录和每个直接子目录中的 control-panel.json';
 
   const remove = document.createElement('button');
   remove.className = 'ghost';
@@ -113,29 +176,59 @@ function renderProject(project) {
   const name = fragment.querySelector('.project-name');
   const pathNode = fragment.querySelector('.project-path');
   const notes = fragment.querySelector('.project-notes');
+  const details = fragment.querySelector('.project-details');
+  const detailToggle = fragment.querySelector('.detail-toggle');
   const status = fragment.querySelector('.status-pill');
+  const usage = fragment.querySelector('.project-usage');
+  const lastStarted = fragment.querySelector('.project-last-started');
   const pid = fragment.querySelector('.project-pid');
+  const source = fragment.querySelector('.project-source');
+  const root = fragment.querySelector('.project-root');
+  const dir = fragment.querySelector('.project-dir');
   const output = fragment.querySelector('.project-output');
   const startBtn = fragment.querySelector('.start-btn');
   const stopBtn = fragment.querySelector('.stop-btn');
   const restartBtn = fragment.querySelector('.restart-btn');
   const homepageBtn = fragment.querySelector('.homepage-btn');
+  const repositoryBtn = fragment.querySelector('.repository-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
+  const projectConfigBtn = fragment.querySelector('.project-config-btn');
 
-  name.textContent = project.name;
-  pathNode.textContent = project.projectDir || project.workingDirectory;
-  notes.textContent = [project.notes || '未填写说明', project.source === 'auto' ? `来源：${project.root}` : '来源：手动配置']
-    .filter(Boolean)
-    .join(' · ');
-  status.textContent = statusLabel(project.status);
+  const summaryText = project.notes || '未填写说明';
+  const outputText = project.details || project.lastOutput || '';
+  name.textContent = `${project.name} · ${summaryText}`;
+  pathNode.textContent = outputText || '';
+  notes.textContent = '';
+  pathNode.hidden = !outputText;
+  notes.hidden = true;
+  status.textContent = '';
   status.dataset.status = project.status;
-  pid.textContent = project.pid ? `PID ${project.pid}` : '无进程 ID';
-  output.textContent = project.details || project.lastOutput || '';
+  status.title = statusLabel(project.status);
+  status.setAttribute('aria-label', statusLabel(project.status));
+  usage.textContent = String(project.usageCount || 0);
+  lastStarted.textContent = project.lastStartedAt ? formatTimestamp(project.lastStartedAt) : '-';
+  pid.textContent = project.pid ? String(project.pid) : '-';
+  source.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '来源：手动配置';
+  root.textContent = project.root || '未配置';
+  dir.textContent = project.projectDir || project.workingDirectory || '未配置';
+  output.textContent = outputText || '-';
+  details.hidden = !project.pid && !outputText && !project.root && !(project.projectDir || project.workingDirectory);
+  detailToggle.hidden = details.hidden;
+
+  detailToggle.addEventListener('click', () => {
+    const expanded = !details.classList.contains('hidden');
+    details.classList.toggle('hidden', expanded);
+    detailToggle.textContent = expanded ? '详情' : '收起';
+    detailToggle.classList.toggle('is-active', !expanded);
+  });
 
   startBtn.disabled = project.status === 'running' || project.status === 'starting';
   stopBtn.disabled = project.status === 'stopped' || project.status === 'stopping';
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
-  homepageBtn.disabled = !(project.homepageUrl || project.openHomepageCommand);
+  homepageBtn.disabled = !(project.frontendUrl || project.homepageUrl || project.openHomepageCommand || project.projectDir);
+  repositoryBtn.disabled = !project.projectDir;
+  projectConfigBtn.disabled = !project.manifestPath;
+  projectConfigBtn.title = project.manifestPath ? '编辑项目展示信息' : '手工项目没有 control-panel.json，不能在此编辑';
 
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
@@ -161,9 +254,17 @@ function renderProject(project) {
     await refresh();
   });
 
+  repositoryBtn.addEventListener('click', async () => {
+    repositoryBtn.disabled = true;
+    await api.openProjectRepository(project.key);
+    await refresh();
+  });
+
   folderBtn.addEventListener('click', async () => {
     await api.openProjectFolder(project.projectDir || project.workingDirectory);
   });
+
+  projectConfigBtn.addEventListener('click', () => openProjectEditor(project));
 
   card.dataset.status = project.status;
   return fragment;
@@ -175,19 +276,8 @@ function renderDashboard(data) {
   const projects = runningOnly ? allProjects.filter((project) => project.status === 'running') : allProjects;
   els.list.innerHTML = '';
 
-  if (allProjects.length === 0) {
-    els.summary.textContent = '没有发现项目。把项目根目录加入扫描列表后，符合规范的项目会自动出现。';
-  } else if (runningOnly) {
-    const runningCount = allProjects.filter((project) => project.status === 'running').length;
-    els.summary.textContent = runningCount
-      ? `正在显示 ${runningCount} 个运行中的项目。`
-      : '当前没有运行中的项目。';
-  } else {
-    els.summary.textContent = `共 ${allProjects.length} 个项目，正在监控它们的状态。`;
-  }
-
   const runningCount = allProjects.filter((project) => project.status === 'running').length;
-  els.runningSummary.textContent = runningOnly ? `运行中 ${runningCount}/${allProjects.length}` : `${runningCount} running`;
+  els.runningSummary.textContent = `${allProjects.length} 项目 · ${runningCount} 运行中`;
   els.configPath.textContent = data.configPath || '-';
   els.statePath.textContent = data.statePath || '-';
   els.updatedAt.textContent = formatTimestamp(data.updatedAt);
@@ -203,8 +293,36 @@ function renderDashboard(data) {
 }
 
 async function refresh() {
-  const data = await api.getDashboardData();
-  renderDashboard(data);
+  if (refreshInFlight) {
+    return;
+  }
+
+  refreshInFlight = true;
+  const defaultLabel = '刷新';
+  els.refreshBtn.disabled = true;
+  els.refreshBtn.textContent = '刷新中...';
+
+  try {
+    const data = await api.getDashboardData();
+    renderDashboard(data);
+  } catch (error) {
+    const message = String(error?.message || error || '未知错误');
+    els.runningSummary.textContent = `刷新失败：${message}`;
+    els.refreshBtn.textContent = '刷新失败';
+    els.refreshBtn.title = message;
+    window.setTimeout(() => {
+      if (!refreshInFlight) {
+        els.refreshBtn.textContent = defaultLabel;
+        els.refreshBtn.title = '';
+      }
+    }, 2500);
+  } finally {
+    refreshInFlight = false;
+    els.refreshBtn.disabled = false;
+    if (els.refreshBtn.textContent === '刷新中...') {
+      els.refreshBtn.textContent = defaultLabel;
+    }
+  }
 }
 
 els.refreshBtn.addEventListener('click', refresh);
@@ -220,6 +338,39 @@ els.closeSettingsBtn.addEventListener('click', closeSettings);
 els.settingsModal.addEventListener('click', (event) => {
   if (event.target === els.settingsModal) {
     closeSettings();
+  }
+});
+els.closeProjectEditorBtn.addEventListener('click', closeProjectEditor);
+els.cancelProjectEditorBtn.addEventListener('click', closeProjectEditor);
+els.projectEditorModal.addEventListener('click', (event) => {
+  if (event.target === els.projectEditorModal) {
+    closeProjectEditor();
+  }
+});
+els.projectEditorForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!editingProject) {
+    return;
+  }
+
+  setProjectEditorError();
+  els.saveProjectEditorBtn.disabled = true;
+  try {
+    await api.saveProjectPresentation(editingProject.key, projectEditorData());
+    closeProjectEditor();
+  } catch (error) {
+    setProjectEditorError(String(error?.message || error || '保存失败'));
+  } finally {
+    els.saveProjectEditorBtn.disabled = false;
+  }
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (!els.projectEditorModal.classList.contains('hidden')) {
+      closeProjectEditor();
+    } else if (!els.settingsModal.classList.contains('hidden')) {
+      closeSettings();
+    }
   }
 });
 els.loginToggle.addEventListener('change', async (event) => {
@@ -261,5 +412,5 @@ api.onAppReady((payload) => {
 });
 
 refresh().catch((error) => {
-  els.summary.textContent = `加载失败：${String(error.message || error)}`;
+  els.runningSummary.textContent = `加载失败：${String(error.message || error)}`;
 });

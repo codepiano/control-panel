@@ -6,11 +6,13 @@ contextBridge.exposeInMainWorld('controlPanel', {
   stopProject: (projectId) => ipcRenderer.invoke('stop-project', projectId),
   restartProject: (projectId) => ipcRenderer.invoke('restart-project', projectId),
   openProjectHomepage: (projectId) => ipcRenderer.invoke('open-project-homepage', projectId),
+  openProjectRepository: (projectId) => ipcRenderer.invoke('open-project-repository', projectId),
   refreshProjects: () => ipcRenderer.invoke('refresh-projects'),
   openConfigFolder: () => ipcRenderer.invoke('open-config-folder'),
   openConfigFile: () => ipcRenderer.invoke('open-config-file'),
   chooseProjectRoots: () => ipcRenderer.invoke('choose-project-roots'),
   setProjectRoots: (roots) => ipcRenderer.invoke('set-project-roots', roots),
+  saveProjectPresentation: (projectKey, input) => ipcRenderer.invoke('save-project-presentation', projectKey, input),
   openProjectFolder: (folderPath) => ipcRenderer.invoke('open-project-folder', folderPath),
   setOpenAtLogin: (enable) => ipcRenderer.invoke('set-open-at-login', enable),
   onProjectsUpdated: (handler) => {
