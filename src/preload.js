@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('controlPanel', {
   openConfigFile: () => ipcRenderer.invoke('open-config-file'),
   chooseProjectRoots: () => ipcRenderer.invoke('choose-project-roots'),
   setProjectRoots: (roots) => ipcRenderer.invoke('set-project-roots', roots),
+  saveProjectPresentation: (projectKey, input) => ipcRenderer.invoke('save-project-presentation', projectKey, input),
   openProjectFolder: (folderPath) => ipcRenderer.invoke('open-project-folder', folderPath),
   setOpenAtLogin: (enable) => ipcRenderer.invoke('set-open-at-login', enable),
   onProjectsUpdated: (handler) => {

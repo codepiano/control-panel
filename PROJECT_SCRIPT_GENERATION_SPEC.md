@@ -1,6 +1,6 @@
 # Project Script Generation Spec
 
-Version: `1.1`
+Version: `1.3`
 
 This document is the canonical contract for any AI that generates or repairs project control scripts for a repository managed by Control Panel.
 
@@ -94,7 +94,19 @@ Recommended precedence:
 
 If a manifest provides `frontendUrl`, use it before trying any heuristic lookup.
 
-### 3.3 Script path convention
+### 3.4 Graphical manifest editing
+
+`control-panel.json` is the single source of truth for a discovered project. A control surface may
+provide a graphical editor that reads and atomically writes that same manifest; it must not create
+a separate per-project override layer.
+
+The editor may expose only presentation fields: `name`, `frontendUrl` (including its port), and
+`notes`. It must preserve all other manifest fields unchanged. Lifecycle commands, script paths,
+working directory, process ownership, and runtime fields are specification-owned and must not be
+editable through the control surface. Validate a non-empty name, a complete `http` or `https`
+URL, a URL port from `1` to `65535` when present, and bounded single-line text inputs.
+
+### 3.5 Script path convention
 
 If the manifest uses script paths, they should be relative to `workingDirectory`.
 

@@ -6,6 +6,7 @@ const { exec, spawn } = require('child_process');
 const APP_NAME = 'Control Panel';
 const CONFIG_ENV = 'CONTROL_PANEL_CONFIG';
 const DEFAULT_REFRESH_MS = 5000;
+const STATUS_COMMAND_TIMEOUT_MS = 8000;
 const DEFAULT_SCAN_DEPTH = 1;
 const DEFAULT_MANIFEST_NAME = 'control-panel.json';
 const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
@@ -60,6 +61,65 @@ function normalizeConfig(config) {
     },
     projects: Array.isArray(base.projects) ? base.projects : [],
   };
+}
+
+function cleanText(value, maxLength, fieldName, { required = false } = {}) {
+  const text = String(value || '').trim();
+  if (text.includes('\0') || /[\r\n]/.test(text)) {
+    throw new Error(`${fieldName}不能包含换行或空字符`);
+  }
+  if (required && !text) {
+    throw new Error(`${fieldName}不能为空`);
+  }
+  if (text.length > maxLength) {
+    throw new Error(`${fieldName}不能超过 ${maxLength} 个字符`);
+  }
+  return text;
+}
+
+function validateFrontendUrl(value, portValue) {
+  const text = cleanText(value, 500, '访问地址');
+  const portText = String(portValue || '').trim();
+  if (!text && !portText) {
+    return '';
+  }
+  if (!text) {
+    throw new Error('填写端口时也需要填写访问地址');
+  }
+
+  let url;
+  try {
+    url = new URL(text);
+  } catch (error) {
+    throw new Error('访问地址必须是完整的 http 或 https URL');
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) {
+    throw new Error('访问地址必须使用 http 或 https，并包含主机名');
+  }
+  if (portText && (!/^\d+$/.test(portText) || Number(portText) < 1 || Number(portText) > 65535)) {
+    throw new Error('端口必须介于 1 和 65535 之间');
+  }
+  if (portText) {
+    url.port = portText;
+  }
+  if (url.port && (Number(url.port) < 1 || Number(url.port) > 65535)) {
+    throw new Error('端口必须介于 1 和 65535 之间');
+  }
+  return url.toString().replace(/\/$/, '');
+}
+
+function validateProjectPresentation(input) {
+  return {
+    name: cleanText(input.name, 80, '项目名称', { required: true }),
+    frontendUrl: validateFrontendUrl(input.frontendUrl, input.frontendPort),
+    notes: cleanText(input.notes, 500, '备注'),
+  };
+}
+
+function writeProjectManifest(manifestPath, manifest) {
+  const tempPath = `${manifestPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(manifest, null, 2) + '\n');
+  fs.renameSync(tempPath, manifestPath);
 }
 
 function readJson(filePath, fallback) {
@@ -137,15 +197,21 @@ function execCommand(command, cwd) {
       return;
     }
 
-    exec(command, { cwd, shell: '/bin/zsh', env: process.env }, (error, stdout, stderr) => {
-      resolve(
-        normalizeCommandResult({
-          code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
-          stdout,
-          stderr,
-        })
-      );
-    });
+    exec(
+      command,
+      { cwd, shell: '/bin/zsh', env: process.env, timeout: STATUS_COMMAND_TIMEOUT_MS },
+      (error, stdout, stderr) => {
+        resolve(
+          normalizeCommandResult({
+            code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+            stdout,
+            stderr: error?.killed
+              ? `${stderr || ''}\n命令超时（${STATUS_COMMAND_TIMEOUT_MS / 1000} 秒）`.trim()
+              : stderr,
+          })
+        );
+      }
+    );
   });
 }
 
@@ -660,18 +726,18 @@ async function getProjectStatus(project) {
 async function collectProjectsSnapshot() {
   const config = loadConfig();
   const discovered = discoverProjects(config);
-  const snapshot = [];
-
-  for (const project of discovered) {
-    const status = await getProjectStatus(project);
-    const state = projectState[project.key] || {};
-    snapshot.push({
-      ...project,
-      usageCount: Number(state.usageCount || 0),
-      lastStartedAt: String(state.lastStartedAt || ''),
-      ...status,
-    });
-  }
+  const snapshot = await Promise.all(
+    discovered.map(async (project) => {
+      const status = await getProjectStatus(project);
+      const state = projectState[project.key] || {};
+      return {
+        ...project,
+        usageCount: Number(state.usageCount || 0),
+        lastStartedAt: String(state.lastStartedAt || ''),
+        ...status,
+      };
+    })
+  );
 
   projectsCache = snapshot;
   return {
@@ -1200,6 +1266,27 @@ function registerIpc() {
     });
     await refreshAll();
     return currentConfig;
+  });
+
+  ipcMain.handle('save-project-presentation', async (_event, projectKey, input) => {
+    const project = findProjectByKey(String(projectKey || ''));
+    if (!project || !project.manifestPath) {
+      throw new Error('项目不存在，请刷新后重试');
+    }
+
+    const manifest = parseManifest(project.manifestPath);
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+      throw new Error('项目配置文件无法读取，请修复 JSON 后重试');
+    }
+
+    const presentation = validateProjectPresentation(input || {});
+    const nextManifest = { ...manifest, ...presentation };
+    if (!presentation.frontendUrl) {
+      delete nextManifest.frontendUrl;
+    }
+    writeProjectManifest(project.manifestPath, nextManifest);
+    await refreshAll();
+    return true;
   });
 
   ipcMain.handle('set-open-at-login', async (_event, enable) => {

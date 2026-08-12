@@ -14,6 +14,13 @@ const els = {
   loginToggle: document.getElementById('loginToggle'),
   settingsModal: document.getElementById('settingsModal'),
   closeSettingsBtn: document.getElementById('closeSettingsBtn'),
+  projectEditorModal: document.getElementById('projectEditorModal'),
+  projectEditorForm: document.getElementById('projectEditorForm'),
+  projectEditorHint: document.getElementById('projectEditorHint'),
+  projectEditorError: document.getElementById('projectEditorError'),
+  closeProjectEditorBtn: document.getElementById('closeProjectEditorBtn'),
+  cancelProjectEditorBtn: document.getElementById('cancelProjectEditorBtn'),
+  saveProjectEditorBtn: document.getElementById('saveProjectEditorBtn'),
   rootInput: document.getElementById('rootInput'),
   browseRootBtn: document.getElementById('browseRootBtn'),
   addRootBtn: document.getElementById('addRootBtn'),
@@ -23,6 +30,8 @@ const els = {
 
 let latestPayload = null;
 let runningOnly = false;
+let refreshInFlight = false;
+let editingProject = null;
 
 function formatTimestamp(isoString) {
   if (!isoString) {
@@ -56,6 +65,61 @@ function openSettings() {
 function closeSettings() {
   els.settingsModal.classList.add('hidden');
   els.settingsModal.setAttribute('aria-hidden', 'true');
+}
+
+function setProjectEditorError(message = '') {
+  els.projectEditorError.textContent = message;
+  els.projectEditorError.classList.toggle('hidden', !message);
+}
+
+function setFormValue(name, value) {
+  els.projectEditorForm.elements[name].value = value || '';
+}
+
+function splitFrontendUrl(value) {
+  if (!value) {
+    return { address: '', port: '' };
+  }
+
+  try {
+    const url = new URL(value);
+    const port = url.port;
+    url.port = '';
+    return { address: url.toString().replace(/\/$/, ''), port };
+  } catch (error) {
+    return { address: value, port: '' };
+  }
+}
+
+function openProjectEditor(project) {
+  editingProject = project;
+  setProjectEditorError();
+  const frontend = splitFrontendUrl(project.frontendUrl);
+  els.projectEditorHint.textContent = `${project.manifestPath} · 修改会直接保存到项目自身的 control-panel.json。`;
+  setFormValue('name', project.name);
+  setFormValue('frontendUrl', frontend.address);
+  setFormValue('frontendPort', frontend.port);
+  setFormValue('notes', project.notes);
+  els.projectEditorModal.classList.remove('hidden');
+  els.projectEditorModal.setAttribute('aria-hidden', 'false');
+  els.projectEditorForm.elements.name.focus();
+}
+
+function closeProjectEditor() {
+  editingProject = null;
+  setProjectEditorError();
+  els.projectEditorModal.classList.add('hidden');
+  els.projectEditorModal.setAttribute('aria-hidden', 'true');
+}
+
+function projectEditorData() {
+  const form = els.projectEditorForm.elements;
+  return {
+    name: form.name.value,
+    frontendUrl: form.frontendUrl.value,
+    frontendPort: form.frontendPort.value,
+    notes: form.notes.value,
+  };
 }
 
 function renderRootRow(root) {
@@ -128,6 +192,7 @@ function renderProject(project) {
   const homepageBtn = fragment.querySelector('.homepage-btn');
   const repositoryBtn = fragment.querySelector('.repository-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
+  const projectConfigBtn = fragment.querySelector('.project-config-btn');
 
   const summaryText = project.notes || '未填写说明';
   const outputText = project.details || project.lastOutput || '';
@@ -162,6 +227,8 @@ function renderProject(project) {
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
   homepageBtn.disabled = !(project.frontendUrl || project.homepageUrl || project.openHomepageCommand || project.projectDir);
   repositoryBtn.disabled = !project.projectDir;
+  projectConfigBtn.disabled = !project.manifestPath;
+  projectConfigBtn.title = project.manifestPath ? '编辑项目展示信息' : '手工项目没有 control-panel.json，不能在此编辑';
 
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
@@ -197,6 +264,8 @@ function renderProject(project) {
     await api.openProjectFolder(project.projectDir || project.workingDirectory);
   });
 
+  projectConfigBtn.addEventListener('click', () => openProjectEditor(project));
+
   card.dataset.status = project.status;
   return fragment;
 }
@@ -224,8 +293,36 @@ function renderDashboard(data) {
 }
 
 async function refresh() {
-  const data = await api.getDashboardData();
-  renderDashboard(data);
+  if (refreshInFlight) {
+    return;
+  }
+
+  refreshInFlight = true;
+  const defaultLabel = '刷新';
+  els.refreshBtn.disabled = true;
+  els.refreshBtn.textContent = '刷新中...';
+
+  try {
+    const data = await api.getDashboardData();
+    renderDashboard(data);
+  } catch (error) {
+    const message = String(error?.message || error || '未知错误');
+    els.runningSummary.textContent = `刷新失败：${message}`;
+    els.refreshBtn.textContent = '刷新失败';
+    els.refreshBtn.title = message;
+    window.setTimeout(() => {
+      if (!refreshInFlight) {
+        els.refreshBtn.textContent = defaultLabel;
+        els.refreshBtn.title = '';
+      }
+    }, 2500);
+  } finally {
+    refreshInFlight = false;
+    els.refreshBtn.disabled = false;
+    if (els.refreshBtn.textContent === '刷新中...') {
+      els.refreshBtn.textContent = defaultLabel;
+    }
+  }
 }
 
 els.refreshBtn.addEventListener('click', refresh);
@@ -241,6 +338,39 @@ els.closeSettingsBtn.addEventListener('click', closeSettings);
 els.settingsModal.addEventListener('click', (event) => {
   if (event.target === els.settingsModal) {
     closeSettings();
+  }
+});
+els.closeProjectEditorBtn.addEventListener('click', closeProjectEditor);
+els.cancelProjectEditorBtn.addEventListener('click', closeProjectEditor);
+els.projectEditorModal.addEventListener('click', (event) => {
+  if (event.target === els.projectEditorModal) {
+    closeProjectEditor();
+  }
+});
+els.projectEditorForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!editingProject) {
+    return;
+  }
+
+  setProjectEditorError();
+  els.saveProjectEditorBtn.disabled = true;
+  try {
+    await api.saveProjectPresentation(editingProject.key, projectEditorData());
+    closeProjectEditor();
+  } catch (error) {
+    setProjectEditorError(String(error?.message || error || '保存失败'));
+  } finally {
+    els.saveProjectEditorBtn.disabled = false;
+  }
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (!els.projectEditorModal.classList.contains('hidden')) {
+      closeProjectEditor();
+    } else if (!els.settingsModal.classList.contains('hidden')) {
+      closeSettings();
+    }
   }
 });
 els.loginToggle.addEventListener('change', async (event) => {

@@ -8,7 +8,7 @@
   </head>
   <body>
     <header class="window-bar">
-      <div class="window-bar-left">
+      <div class="window-bar-left window-bar-drag">
         <div class="drag-dots"></div>
         <div class="window-bar-title">
           <strong>Control Panel</strong>
@@ -109,6 +109,31 @@
       </div>
     </div>
 
+    <div id="projectEditorModal" class="modal hidden" aria-hidden="true">
+      <form id="projectEditorForm" class="modal-card project-editor">
+        <div class="modal-header">
+          <div>
+            <h2>项目配置</h2>
+            <p id="projectEditorHint">修改会直接保存到项目自身的 control-panel.json。</p>
+          </div>
+          <button id="closeProjectEditorBtn" class="secondary" type="button">关闭</button>
+        </div>
+        <p id="projectEditorError" class="form-error hidden" role="alert"></p>
+        <section class="panel form-grid">
+          <label>项目名称<input name="name" required maxlength="80" /></label>
+          <label>访问地址<input name="frontendUrl" type="url" placeholder="http://127.0.0.1" /></label>
+          <label>端口（可选）<input name="frontendPort" type="number" min="1" max="65535" step="1" placeholder="5173" /></label>
+          <label class="full-width">备注<textarea name="notes" rows="2" maxlength="500"></textarea></label>
+        </section>
+        <p class="field-help">生命周期命令、工作目录等规范字段由项目维护，不能在控制面板中修改。访问地址和端口会写入 `frontendUrl`。</p>
+        <div class="form-actions">
+          <span class="form-spacer"></span>
+          <button id="cancelProjectEditorBtn" class="secondary" type="button">取消</button>
+          <button id="saveProjectEditorBtn" type="submit">保存配置</button>
+        </div>
+      </form>
+    </div>
+
     <template id="projectTemplate">
       <section class="card">
         <div class="card-top">
@@ -161,6 +186,7 @@
           <button class="homepage-btn ghost">主页</button>
           <button class="repository-btn ghost">仓库</button>
           <button class="folder-btn ghost">目录</button>
+          <button class="project-config-btn ghost">配置</button>
         </div>
       </section>
     </template>

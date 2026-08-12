@@ -48,7 +48,7 @@ body {
   background: rgba(8, 16, 31, 0.92);
   backdrop-filter: blur(18px);
   box-shadow: var(--shadow);
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .window-bar-left,
@@ -56,6 +56,13 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.window-bar-drag {
+  flex: 1;
+  min-width: 0;
+  -webkit-app-region: drag;
+  cursor: move;
 }
 
 .window-bar-title {
@@ -174,6 +181,80 @@ body {
 
 .info-panel .meta {
   margin-top: 10px;
+}
+
+.project-editor {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.form-grid .full-width {
+  grid-column: 1 / -1;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 10px;
+  color: var(--text);
+  background: rgba(3, 9, 20, 0.58);
+  font: inherit;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+textarea {
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus {
+  outline: 2px solid rgba(124, 219, 141, 0.65);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.field-help {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.form-error {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 12px;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.3);
+  font-size: 12px;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.form-spacer {
+  flex: 1;
 }
 
 button {
@@ -542,6 +623,18 @@ button:disabled {
   .card-meta {
     grid-template-columns: 1fr;
   }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-grid .full-width {
+    grid-column: auto;
+  }
+
+  .form-actions {
+    flex-wrap: wrap;
+  }
 }
 
 .content button,
@@ -560,4 +653,10 @@ label,
 .card-actions button,
 .window-bar-right button {
   -webkit-app-region: no-drag;
+}
+
+.modal input,
+.modal textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
