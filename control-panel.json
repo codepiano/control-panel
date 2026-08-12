@@ -1,6 +1,7 @@
 {
   "id": "control-panel",
   "name": "控制面板",
+  "icon": "assets/app-icon.png",
   "workingDirectory": ".",
   "startCommand": "./scripts/start.sh",
   "stopCommand": "./scripts/stop.sh",

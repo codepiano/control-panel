@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('controlPanel', {
   setProjectStartOnPanelLaunch: (projectKey, enable) => (
     ipcRenderer.invoke('set-project-start-on-panel-launch', projectKey, enable)
   ),
+  chooseProjectIcon: (projectKey) => ipcRenderer.invoke('choose-project-icon', projectKey),
+  resetProjectIcon: (projectKey) => ipcRenderer.invoke('reset-project-icon', projectKey),
   onProjectsUpdated: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on('projects-updated', listener);

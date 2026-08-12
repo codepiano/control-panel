@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-12T20:58:04Z",
+  "title": "Design System: Control Panel",
+  "extensions": {
+    "colorMeta": {
+      "canvas": { "role": "neutral", "displayName": "Machine Canvas", "canonical": "#0f1212", "tonalRamp": ["#0f1212", "#1b2020", "#29302f", "#3a4441", "#58635e", "#7d8782", "#a2aaa5", "#f1f3ef"] },
+      "chrome": { "role": "neutral", "displayName": "Graphite Chrome", "canonical": "#131717", "tonalRamp": ["#131717", "#1c2121", "#29302f", "#3a4441", "#58635e", "#7d8782", "#a2aaa5", "#f1f3ef"] },
+      "surface": { "role": "neutral", "displayName": "Working Surface", "canonical": "#171b1b", "tonalRamp": ["#171b1b", "#1c2121", "#202626", "#29302f", "#3a4441", "#58635e", "#a2aaa5", "#f1f3ef"] },
+      "surface-raised": { "role": "neutral", "displayName": "Raised Graphite", "canonical": "#1c2121", "tonalRamp": ["#171b1b", "#1c2121", "#202626", "#29302f", "#3a4441", "#58635e", "#a2aaa5", "#f1f3ef"] },
+      "surface-hover": { "role": "neutral", "displayName": "Hover Graphite", "canonical": "#202626", "tonalRamp": ["#171b1b", "#1c2121", "#202626", "#29302f", "#3a4441", "#58635e", "#a2aaa5", "#f1f3ef"] },
+      "text": { "role": "neutral", "displayName": "Warm White", "canonical": "#f1f3ef", "tonalRamp": ["#0f1212", "#29302f", "#58635e", "#7d8782", "#a2aaa5", "#c9d2cd", "#d8ded9", "#f1f3ef"] },
+      "muted": { "role": "neutral", "displayName": "Muted Grey", "canonical": "#a2aaa5", "tonalRamp": ["#0f1212", "#29302f", "#58635e", "#7d8782", "#a2aaa5", "#c9d2cd", "#d8ded9", "#f1f3ef"] },
+      "quiet": { "role": "neutral", "displayName": "Quiet Grey", "canonical": "#7d8782", "tonalRamp": ["#0f1212", "#29302f", "#58635e", "#7d8782", "#a2aaa5", "#c9d2cd", "#d8ded9", "#f1f3ef"] },
+      "line": { "role": "neutral", "displayName": "Hairline", "canonical": "#29302f", "tonalRamp": ["#0f1212", "#171b1b", "#29302f", "#3a4441", "#58635e", "#7d8782", "#a2aaa5", "#f1f3ef"] },
+      "line-strong": { "role": "neutral", "displayName": "Strong Hairline", "canonical": "#3a4441", "tonalRamp": ["#0f1212", "#171b1b", "#29302f", "#3a4441", "#58635e", "#7d8782", "#a2aaa5", "#f1f3ef"] },
+      "mint": { "role": "primary", "displayName": "Operational Mint", "canonical": "#78d6a4", "tonalRamp": ["#102319", "#173326", "#284b39", "#487158", "#78d6a4", "#91dfb5", "#a2e8c1", "#d8f6e5"] },
+      "mint-dim": { "role": "primary", "displayName": "Dim Mint", "canonical": "#284b39", "tonalRamp": ["#102319", "#173326", "#284b39", "#487158", "#78d6a4", "#91dfb5", "#a2e8c1", "#d8f6e5"] },
+      "amber": { "role": "secondary", "displayName": "Attention Amber", "canonical": "#e6b45b", "tonalRamp": ["#2a2212", "#54452a", "#806633", "#b58c46", "#e6b45b", "#f0c978", "#f6dca3", "#fff4dd"] },
+      "coral": { "role": "tertiary", "displayName": "Fault Coral", "canonical": "#e77b6f", "tonalRamp": ["#251918", "#4a2926", "#6b3a35", "#a25750", "#e77b6f", "#ee9b92", "#f2a198", "#ffe2de"] },
+      "coral-dim": { "role": "tertiary", "displayName": "Dim Coral", "canonical": "#4a2926", "tonalRamp": ["#251918", "#4a2926", "#6b3a35", "#a25750", "#e77b6f", "#ee9b92", "#f2a198", "#ffe2de"] }
+    },
+    "typographyMeta": {
+      "body": { "displayName": "Native Body", "purpose": "Default UI text across the macOS operations console." },
+      "summary-count": { "displayName": "Summary Count", "purpose": "The primary live metric in the system summary." },
+      "project-name": { "displayName": "Project Name", "purpose": "The primary identifier in each project row." },
+      "control": { "displayName": "Control", "purpose": "Buttons, search input, and selects." },
+      "label": { "displayName": "Metadata Label", "purpose": "Small uppercase labels in detailed metadata." }
+    },
+    "shadows": [
+      { "name": "floating-overlay", "value": "0 20px 48px rgb(0 0 0 / 0.34)", "purpose": "Floating project menus and modal cards." },
+      { "name": "healthy-indicator", "value": "0 2px 8px rgb(120 214 164 / 0.35)", "purpose": "Healthy summary indicator." },
+      { "name": "running-rail", "value": "0 2px 7px rgb(120 214 164 / 0.4)", "purpose": "Running project status-rail marker." }
+    ],
+    "motion": [
+      { "name": "control-state", "value": "background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease", "purpose": "Default button state transition." },
+      { "name": "row-hover", "value": "background 120ms ease", "purpose": "Project-row hover transition." },
+      { "name": "reduced-motion", "value": "1ms", "purpose": "Applied to transitions and animations when reduced motion is preferred." }
+    ],
+    "breakpoints": [
+      { "name": "compact-desktop", "value": "1050px" },
+      { "name": "small-screen", "value": "760px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Default direct operation button.",
+      "html": "<button class=\"ds-btn-primary\">启动</button>",
+      "css": ".ds-btn-primary { min-height: 30px; padding: 6px 11px; border: 1px solid transparent; border-radius: 7px; color: #102319; background: var(--mint, #78d6a4); cursor: pointer; font: 680 12px/1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', sans-serif; transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease; } .ds-btn-primary:hover:not(:disabled) { background: #91dfb5; } .ds-btn-primary:active:not(:disabled) { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid var(--mint, #78d6a4); outline-offset: 2px; } .ds-btn-primary:disabled { cursor: not-allowed; opacity: .38; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Neutral opening, cancellation, and settings action.",
+      "html": "<button class=\"ds-btn-secondary\">打开</button>",
+      "css": ".ds-btn-secondary { min-height: 30px; padding: 6px 11px; border: 1px solid var(--line-strong, #3a4441); border-radius: 7px; color: #d8ded9; background: var(--surface-raised, #1c2121); cursor: pointer; font: 680 12px/1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', sans-serif; transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease; } .ds-btn-secondary:hover:not(:disabled) { border-color: #53605c; color: var(--text, #f1f3ef); background: var(--surface-hover, #202626); } .ds-btn-secondary:active:not(:disabled) { transform: translateY(1px); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--mint, #78d6a4); outline-offset: 2px; }"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "Compact project filter field.",
+      "html": "<input class=\"ds-input-search\" type=\"search\" placeholder=\"搜索项目或路径\" />",
+      "css": ".ds-input-search { width: 310px; min-height: 34px; padding: 7px 11px; border: 1px solid var(--line-strong, #3a4441); border-radius: 7px; color: var(--text, #f1f3ef); background: var(--surface, #171b1b); font: 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', sans-serif; } .ds-input-search::placeholder { color: var(--quiet, #7d8782); } .ds-input-search:focus-visible { outline: 2px solid var(--mint, #78d6a4); outline-offset: 2px; }"
+    },
+    {
+      "name": "Project Group",
+      "kind": "card",
+      "refersTo": "project-group",
+      "description": "Dense grouped container for project operation rows.",
+      "html": "<section class=\"ds-project-group\"><header class=\"ds-project-group-header\">本机项目 <span>4</span></header><div class=\"ds-project-row\">项目名称 <button>打开</button></div></section>",
+      "css": ".ds-project-group { overflow: hidden; border: 1px solid var(--line, #29302f); border-radius: 9px; color: var(--text, #f1f3ef); background: #121616; font: 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', sans-serif; } .ds-project-group-header { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 13px; border-bottom: 1px solid var(--line, #29302f); font-weight: 650; letter-spacing: .01em; } .ds-project-group-header span { display: inline-grid; place-items: center; min-width: 21px; height: 19px; padding: 0 6px; border-radius: 6px; color: var(--muted, #a2aaa5); background: var(--surface-raised, #1c2121); font-size: 10px; } .ds-project-row { display: flex; align-items: center; justify-content: space-between; min-height: 57px; padding: 7px 11px; border-bottom: 1px solid var(--line, #29302f); font-weight: 690; transition: background 120ms ease; } .ds-project-row:hover { background: var(--surface, #171b1b); } .ds-project-row button { min-height: 28px; padding: 5px 12px; border: 1px solid var(--line-strong, #3a4441); border-radius: 7px; color: #d8ded9; background: var(--surface-raised, #1c2121); font: 680 11px/1 inherit; }"
+    },
+    {
+      "name": "Status Rail",
+      "kind": "custom",
+      "refersTo": "status-rail",
+      "description": "Desktop-only running-state signal within a project row.",
+      "html": "<div class=\"ds-status-rail ds-is-running\" aria-label=\"运行中\"><span></span></div>",
+      "css": ".ds-status-rail { position: relative; width: 110px; height: 1px; background: #353d3a; } .ds-status-rail span { position: absolute; top: -2px; left: 0; width: 5px; height: 5px; border-radius: 50%; background: var(--quiet, #7d8782); } .ds-status-rail.ds-is-running { background: var(--mint-dim, #284b39); } .ds-status-rail.ds-is-running span { background: var(--mint, #78d6a4); box-shadow: 0 2px 7px rgb(120 214 164 / .4); }"
+    },
+    {
+      "name": "Overflow Menu",
+      "kind": "nav",
+      "refersTo": "project-menu",
+      "description": "Floating contextual operations menu for a project row.",
+      "html": "<div class=\"ds-project-menu\"><button>查看详情</button><button>重新启动</button><button>打开仓库</button></div>",
+      "css": ".ds-project-menu { display: grid; min-width: 190px; gap: 2px; padding: 6px; border: 1px solid var(--line-strong, #3a4441); border-radius: 9px; background: #202525; box-shadow: 0 20px 48px rgb(0 0 0 / .34); } .ds-project-menu button { width: 100%; min-height: 30px; padding: 6px 11px; border: 1px solid transparent; border-radius: 7px; color: #d8ded9; background: transparent; text-align: left; font: 680 12px/1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', sans-serif; } .ds-project-menu button:hover { border-color: #53605c; color: var(--text, #f1f3ef); background: var(--surface-hover, #202626); } .ds-project-menu button:focus-visible { outline: 2px solid var(--mint, #78d6a4); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Machine Room",
+    "overview": "Control Panel is a dense macOS local-operations console: calm, dark, and factual. Graphite surfaces, warm-white text, hairline boundaries, and compact native controls make live project state legible without turning project management into a dashboard spectacle.\n\nThe interface leads with operations. The title bar, four-part status summary, filtering toolbar, and grouped project rows form a short scan path from machine health to the one service that needs attention. Individual project icons remain monochrome; mint, amber, and coral appear only to communicate state or a direct operation.",
+    "keyCharacteristics": ["Dense grouped rows, not equal-weight dashboard cards.", "Tonal graphite layers and precise one-pixel hairlines.", "Warm, system-native typography with compact labels and direct controls.", "Sparse semantic color and understated state motion."],
+    "rules": [
+      { "name": "The Signal-Only Accent Rule", "body": "Mint, amber, and coral communicate a real operation or runtime condition. Do not use them as decoration or to color project identities.", "section": "colors" },
+      { "name": "The Compact Evidence Rule", "body": "Keep operational text concise, single-line where the implementation clips it, and subordinate supporting facts to project identity and state.", "section": "typography" },
+      { "name": "The Flat-at-Rest Rule", "body": "Rows, fields, groups, and settings panels stay flat. Use elevation only when an element floats over the current task.", "section": "elevation" }
+    ],
+    "dos": ["Do keep the first scan path compact: title bar, truthful summary, toolbar, grouped rows, then direct actions.", "Do use warm white for active text and quiet grey for supporting metadata.", "Do use mint for healthy or default operational intent, amber for transition, and coral for fault or stop intent.", "Do keep project symbols monochrome and contained in the existing rounded-square icon treatment.", "Do use one-pixel graphite hairlines and tonal surface changes to group information."],
+    "donts": ["Don't turn project rows into generic dashboard cards or give all information equal visual weight.", "Don't use mint, amber, or coral as decorative branding or project-category color.", "Don't add permanent shadows to ordinary rows, groups, or fields.", "Don't replace direct start, stop, and open actions with hidden management flows."]
+  }
+}

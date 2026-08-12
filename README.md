@@ -16,6 +16,7 @@
 - 常驻 macOS 菜单栏，可随时打开主面板
 - 按扫描目录自动发现项目，无需逐个手工登记
 - 统一查看状态，并一键启动、停止、重启
+- 按项目图标、运行状态和本机启动偏好分组展示
 - 快速打开项目主入口、仓库和本地目录
 - 统计启动次数、最近启动时间和最近状态输出
 - 图形化编辑项目展示名称、访问地址/端口和备注
@@ -56,6 +57,7 @@ Control Panel 会检查该目录本身和它的直接子目录中的 `control-pa
 {
   "id": "my-api",
   "name": "My API",
+  "icon": "assets/control-panel-icon.png",
   "workingDirectory": ".",
   "startCommand": "./scripts/start.sh",
   "stopCommand": "./scripts/stop.sh",
@@ -91,6 +93,7 @@ project-root/
 | --- | --- |
 | `name` | 面板中的项目名称 |
 | `id` | 稳定标识，建议填写 |
+| `icon` | 项目根目录内的相对图标路径，推荐 PNG、JPEG 或 WebP |
 | `workingDirectory` | 执行命令时使用的目录 |
 | `startCommand` / `stopCommand` / `statusCommand` / `restartCommand` | 项目生命周期命令 |
 | `surfaceType` | 项目主表面：`web`、`desktop`、`hybrid` 或 `service` |
@@ -146,6 +149,8 @@ project-root/
 首次启动时，应用会在 Electron 的 `userData` 目录创建 `projects.json`。这个文件只保存扫描根目录和 Control Panel 自身的使用偏好，不保存项目 manifest 字段的副本。
 
 “随面板启动”属于当前用户在这台 Mac 上的编排偏好，因此保存在 `projects.json` 的 `projectPreferences` 中，不写入项目自身的 `control-panel.json`，也不属于 Project Tooling Spec。面板进程每次启动时，只会拉起已开启该偏好且当前未运行的项目。
+
+项目可通过 manifest 的 `icon` 声明仓库内图标。Control Panel 优先显示用户在本机选择的覆盖图标，其次是 manifest 图标，最后按项目表面类型生成回退图标。本机覆盖图标会转换为 PNG 并保存在 Electron `userData/project-icons` 中，不会写回项目仓库。
 
 如需自定义它的位置：
 

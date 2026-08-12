@@ -7,26 +7,43 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <!--
+      THESIS: A quiet local operations console; refuse generic dashboard cards and equal-weight rows.
+      OWN-WORLD: Graphite work surface, warm white type, precise hairlines, project glyphs, mint/amber/coral state signals.
+      STORY: Read machine health, scan grouped projects, then open or control the right service without hunting.
+      FIRST VIEWPORT: Compact native title bar, truthful four-part summary, toolbar, then dense grouped project rows with direct actions.
+      FORM: Approved operations-console concept; seed key approved-imagegen-control-panel-20260813.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
     <header class="window-bar">
       <div class="window-bar-left window-bar-drag">
-        <div class="drag-dots"></div>
+        <img class="brand-mark" src="../assets/app-icon.png" alt="" />
+        <span class="brand-monogram">CP</span>
+        <span class="brand-divider"></span>
         <div class="window-bar-title">
           <strong>Control Panel</strong>
           <span>项目中控</span>
         </div>
       </div>
       <div class="window-bar-right">
-        <button id="refreshBtn" class="primary">刷新</button>
-        <button id="configBtn" class="secondary">扫描目录</button>
-        <button id="configFileBtn" class="secondary">全局配置</button>
+        <button id="refreshBtn" class="window-action">刷新</button>
+        <button id="configBtn" class="window-action">设置</button>
+        <button id="configFileBtn" class="window-action quiet-action">配置文件</button>
       </div>
     </header>
     <div class="shell">
       <main class="content">
-        <div class="content-header">
-          <div>
-            <h2>项目列表 <span id="runningSummary" class="title-counts">0 项目 · 0 运行中</span></h2>
+        <section class="system-summary" aria-label="控制面板摘要">
+          <div class="summary-lead">
+            <span id="runningSummary" class="summary-count">0 个项目 · 0 个运行中</span>
+            <span id="healthIndicator" class="health-indicator" data-state="idle"></span>
           </div>
+          <div class="summary-metric"><span class="metric-mark health-mark"></span><span><small>整体状态</small><strong id="healthSummary">等待刷新</strong></span></div>
+          <div class="summary-metric"><span class="metric-mark running-mark"></span><span><small>运行中</small><strong id="runningMetric">0</strong></span></div>
+          <div class="summary-metric"><span class="metric-mark launch-mark"></span><span><small>随面板启动</small><strong id="autoStartMetric">0</strong></span></div>
+          <div class="summary-metric"><span class="metric-mark attention-mark"></span><span><small>需要关注</small><strong id="attentionMetric">0</strong></span></div>
+        </section>
+        <div class="content-header">
           <div class="project-toolbar" aria-label="项目列表工具">
             <label class="search-field">
               <span class="sr-only">搜索项目</span>
@@ -52,17 +69,18 @@
               </select>
             </label>
           </div>
+          <span id="updatedAtCompact" class="updated-at-compact">尚未刷新</span>
         </div>
-        <div id="projectList" class="grid"></div>
+        <div id="projectList" class="project-groups"></div>
       </main>
     </div>
 
-    <div id="settingsModal" class="modal hidden" aria-hidden="true">
+    <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-hidden="true">
       <div class="modal-card">
         <div class="modal-header">
           <div>
-            <h2>扫描目录</h2>
-            <p>把项目根目录加进来，目录里符合规范的项目会自动出现。</p>
+            <h2 id="settingsTitle">Control Panel 设置</h2>
+            <p>管理登录启动、扫描目录和本机配置。</p>
           </div>
           <button id="closeSettingsBtn" class="secondary">关闭</button>
         </div>
@@ -122,7 +140,7 @@
     stop.sh
     status.sh</pre>
           <p>
-            `control-panel.json` 支持字段：`name`、`id`、`workingDirectory`、`startCommand`、`stopCommand`、
+            `control-panel.json` 支持字段：`name`、`icon`、`id`、`workingDirectory`、`startCommand`、`stopCommand`、
             `statusCommand`、`openEntryCommand`、`surfaceType`、`runtimeMode`、`processMode`、`frontendUrl`、`appUrl`、
             `appLaunchCommand`、`homepageUrl`、`metricsUrl`、`notes`。也可以写成 `scripts.start`、`scripts.stop`、
             `scripts.status`、`scripts.openEntry`；`openHomepageCommand` 和 `scripts.openHomepage` 保留用于兼容旧项目。
@@ -134,11 +152,11 @@
       </div>
     </div>
 
-    <div id="projectEditorModal" class="modal hidden" aria-hidden="true">
+    <div id="projectEditorModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="projectEditorTitle" aria-hidden="true">
       <form id="projectEditorForm" class="modal-card project-editor">
         <div class="modal-header">
           <div>
-            <h2>项目配置</h2>
+            <h2 id="projectEditorTitle">项目配置</h2>
             <p id="projectEditorHint">修改会直接保存到项目自身的 control-panel.json。</p>
           </div>
           <button id="closeProjectEditorBtn" class="secondary" type="button">关闭</button>
@@ -161,28 +179,37 @@
 
     <template id="projectTemplate">
       <section class="card">
+        <button class="project-icon-button" type="button" title="设置项目图标">
+          <img class="project-icon-image" src="../assets/app-icon.png" alt="" hidden />
+          <span class="project-icon-fallback" aria-hidden="true"></span>
+        </button>
         <div class="project-identity">
-          <div class="project-headline">
-            <div class="project-title-row">
-              <h3 class="project-name"></h3>
-              <span class="status-pill"></span>
-            </div>
+          <div class="project-title-row">
+            <h3 class="project-name"></h3>
             <p class="project-notes"></p>
           </div>
           <p class="project-output" role="status"></p>
-          <button class="detail-toggle ghost" type="button">查看详情</button>
+        </div>
+        <div class="status-rail" aria-hidden="true"><span></span></div>
+        <div class="project-runtime">
+          <span class="status-pill"></span>
+          <span class="runtime-field project-pid"></span>
+          <span class="runtime-field project-port"></span>
         </div>
         <div class="project-controls">
           <div class="card-actions">
+            <button class="homepage-btn secondary">打开</button>
             <button class="primary-action"></button>
-            <button class="homepage-btn ghost">打开入口</button>
             <details class="project-menu">
-              <summary>更多操作</summary>
+              <summary aria-label="更多操作">•••</summary>
               <div class="project-menu-list">
+                <button class="detail-toggle ghost" type="button">查看详情</button>
                 <button class="restart-btn ghost">重新启动</button>
                 <button class="repository-btn ghost">打开仓库</button>
                 <button class="folder-btn ghost">在 Finder 中打开</button>
                 <button class="panel-start-btn ghost">随面板启动</button>
+                <button class="project-icon-btn ghost">设置自定义图标</button>
+                <button class="reset-project-icon-btn ghost">恢复项目图标</button>
                 <button class="project-config-btn ghost">编辑展示信息</button>
               </div>
             </details>
@@ -198,10 +225,8 @@
               <span class="label">最近启动</span>
               <span class="project-last-started value"></span>
             </div>
-            <div class="meta-field">
-              <span class="label">进程 ID</span>
-              <span class="project-pid value"></span>
-            </div>
+            <div class="meta-field"><span class="label">进程 ID</span><span class="project-pid-detail value"></span></div>
+            <div class="meta-field"><span class="label">图标来源</span><span class="project-icon-source value"></span></div>
             <div class="meta-field">
               <span class="label">来源</span>
               <span class="project-source value"></span>
@@ -220,7 +245,7 @@
             </div>
             <div class="meta-field">
               <span class="label">最近输出</span>
-              <span class="project-output value"></span>
+              <span class="project-output-detail value"></span>
             </div>
           </div>
         </div>

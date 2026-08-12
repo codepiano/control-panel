@@ -3,6 +3,12 @@ const api = window.controlPanel;
 const els = {
   list: document.getElementById('projectList'),
   runningSummary: document.getElementById('runningSummary'),
+  healthIndicator: document.getElementById('healthIndicator'),
+  healthSummary: document.getElementById('healthSummary'),
+  runningMetric: document.getElementById('runningMetric'),
+  autoStartMetric: document.getElementById('autoStartMetric'),
+  attentionMetric: document.getElementById('attentionMetric'),
+  updatedAtCompact: document.getElementById('updatedAtCompact'),
   rootsCount: document.getElementById('rootsCount'),
   configPath: document.getElementById('configPath'),
   statePath: document.getElementById('statePath'),
@@ -37,6 +43,37 @@ let statusFilter = 'all';
 let projectSort = 'name';
 let refreshInFlight = false;
 let editingProject = null;
+let modalReturnFocus = null;
+
+function rememberModalFocus() {
+  modalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+}
+
+function restoreModalFocus() {
+  const target = modalReturnFocus;
+  modalReturnFocus = null;
+  if (target && target.isConnected) {
+    target.focus();
+  }
+}
+
+function trapModalFocus(event, modal) {
+  const focusable = [...modal.querySelectorAll(
+    'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])'
+  )].filter((element) => !element.hidden && element.getClientRects().length > 0);
+  if (focusable.length === 0) {
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 function formatTimestamp(isoString) {
   if (!isoString) {
@@ -106,13 +143,16 @@ function sortProjects(projects) {
 }
 
 function openSettings() {
+  rememberModalFocus();
   els.settingsModal.classList.remove('hidden');
   els.settingsModal.setAttribute('aria-hidden', 'false');
+  els.closeSettingsBtn.focus();
 }
 
 function closeSettings() {
   els.settingsModal.classList.add('hidden');
   els.settingsModal.setAttribute('aria-hidden', 'true');
+  restoreModalFocus();
 }
 
 function setProjectEditorError(message = '') {
@@ -140,6 +180,7 @@ function splitFrontendUrl(value) {
 }
 
 function openProjectEditor(project) {
+  rememberModalFocus();
   editingProject = project;
   setProjectEditorError();
   const frontend = splitFrontendUrl(project.frontendUrl);
@@ -158,6 +199,7 @@ function closeProjectEditor() {
   setProjectEditorError();
   els.projectEditorModal.classList.add('hidden');
   els.projectEditorModal.setAttribute('aria-hidden', 'true');
+  restoreModalFocus();
 }
 
 function projectEditorData() {
@@ -229,23 +271,34 @@ function renderProject(project) {
   const usage = fragment.querySelector('.project-usage');
   const lastStarted = fragment.querySelector('.project-last-started');
   const pid = fragment.querySelector('.project-pid');
+  const pidDetail = fragment.querySelector('.project-pid-detail');
+  const port = fragment.querySelector('.project-port');
   const source = fragment.querySelector('.project-source');
   const root = fragment.querySelector('.project-root');
   const dir = fragment.querySelector('.project-dir');
   const output = fragment.querySelector('.project-output');
+  const outputDetail = fragment.querySelector('.project-output-detail');
   const primaryAction = fragment.querySelector('.primary-action');
   const restartBtn = fragment.querySelector('.restart-btn');
   const homepageBtn = fragment.querySelector('.homepage-btn');
   const repositoryBtn = fragment.querySelector('.repository-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
   const projectConfigBtn = fragment.querySelector('.project-config-btn');
+  const projectMenu = fragment.querySelector('.project-menu');
   const panelStartBtn = fragment.querySelector('.panel-start-btn');
   const panelStart = fragment.querySelector('.project-panel-start');
+  const projectIconButton = fragment.querySelector('.project-icon-button');
+  const projectIconImage = fragment.querySelector('.project-icon-image');
+  const projectIconFallback = fragment.querySelector('.project-icon-fallback');
+  const projectIconBtn = fragment.querySelector('.project-icon-btn');
+  const resetProjectIconBtn = fragment.querySelector('.reset-project-icon-btn');
+  const projectIconSource = fragment.querySelector('.project-icon-source');
 
   const outputText = project.details || project.lastOutput || '';
   name.textContent = project.name;
-  notes.textContent = project.notes || '未填写说明';
+  notes.textContent = project.notes || project.techStack || '未填写说明';
   output.textContent = statusSummary(project, outputText);
+  outputDetail.textContent = outputText || '-';
   output.hidden = !output.textContent;
   status.textContent = statusLabel(project.status);
   status.dataset.status = project.status;
@@ -253,11 +306,29 @@ function renderProject(project) {
   status.setAttribute('aria-label', statusLabel(project.status));
   usage.textContent = String(project.usageCount || 0);
   lastStarted.textContent = project.lastStartedAt ? formatTimestamp(project.lastStartedAt) : '-';
-  pid.textContent = project.pid ? String(project.pid) : '-';
+  pid.textContent = project.pid ? `PID ${project.pid}` : 'PID —';
+  pidDetail.textContent = project.pid ? String(project.pid) : '-';
+  try {
+    const parsedUrl = new URL(project.frontendUrl || '');
+    port.textContent = parsedUrl.port ? `端口 ${parsedUrl.port}` : '端口 —';
+  } catch (error) {
+    port.textContent = '端口 —';
+  }
   source.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '来源：手动配置';
   panelStart.textContent = project.startOnPanelLaunch ? '已启用' : '未启用';
   root.textContent = project.root || '未配置';
   dir.textContent = project.projectDir || project.workingDirectory || '未配置';
+  const iconSourceLabels = { user: '用户自定义', project: '项目 manifest', fallback: '自动生成' };
+  projectIconSource.textContent = iconSourceLabels[project.iconSource] || '自动生成';
+  if (project.iconDataUrl) {
+    projectIconImage.src = project.iconDataUrl;
+    projectIconImage.hidden = false;
+    projectIconFallback.hidden = true;
+  } else {
+    projectIconImage.hidden = true;
+    projectIconFallback.hidden = false;
+    projectIconFallback.innerHTML = fallbackIconSvg(project.surfaceType);
+  }
   details.hidden = !project.pid && !outputText && !project.root && !(project.projectDir || project.workingDirectory);
   detailToggle.hidden = details.hidden;
 
@@ -266,6 +337,7 @@ function renderProject(project) {
     details.classList.toggle('hidden', expanded);
     detailToggle.textContent = expanded ? '查看详情' : '收起详情';
     detailToggle.classList.toggle('is-active', !expanded);
+    projectMenu.open = false;
   });
 
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
@@ -281,7 +353,7 @@ function renderProject(project) {
 
   const isRunning = project.status === 'running';
   const isTransitioning = project.status === 'starting' || project.status === 'stopping';
-  primaryAction.textContent = isRunning ? '停止服务' : isTransitioning ? statusLabel(project.status) : '启动服务';
+  primaryAction.textContent = isRunning ? '停止' : isTransitioning ? statusLabel(project.status) : '启动';
   primaryAction.dataset.action = isRunning ? 'stop' : 'start';
   primaryAction.disabled = isTransitioning;
   primaryAction.addEventListener('click', async () => {
@@ -318,6 +390,24 @@ function renderProject(project) {
 
   projectConfigBtn.addEventListener('click', () => openProjectEditor(project));
 
+  const chooseIcon = async () => {
+    try {
+      const changed = await api.chooseProjectIcon(project.key);
+      if (changed) {
+        await refresh();
+      }
+    } catch (error) {
+      els.runningSummary.textContent = `设置项目图标失败：${String(error?.message || error)}`;
+    }
+  };
+  projectIconButton.addEventListener('click', chooseIcon);
+  projectIconBtn.addEventListener('click', chooseIcon);
+  resetProjectIconBtn.hidden = project.iconSource !== 'user';
+  resetProjectIconBtn.addEventListener('click', async () => {
+    await api.resetProjectIcon(project.key);
+    await refresh();
+  });
+
   panelStartBtn.addEventListener('click', async () => {
     panelStartBtn.disabled = true;
     try {
@@ -333,6 +423,40 @@ function renderProject(project) {
   return fragment;
 }
 
+function fallbackIconSvg(surfaceType) {
+  const shared = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"';
+  if (surfaceType === 'web') {
+    return `<svg ${shared}><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.4 2.2 3.5 4.9 3.5 8s-1.1 5.8-3.5 8c-2.4-2.2-3.5-4.9-3.5-8S9.6 6.2 12 4Z"/></svg>`;
+  }
+  if (surfaceType === 'service') {
+    return `<svg ${shared}><path d="M7 8h10M7 12h10M7 16h10"/><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="7" cy="8" r=".6" fill="currentColor" stroke="none"/></svg>`;
+  }
+  if (surfaceType === 'desktop') {
+    return `<svg ${shared}><rect x="3.5" y="4" width="17" height="13" rx="2"/><path d="M8.5 20h7M12 17v3"/></svg>`;
+  }
+  return `<svg ${shared}><path d="m12 3 7.5 4.3v9.4L12 21l-7.5-4.3V7.3L12 3Z"/><path d="m4.8 7.5 7.2 4.2 7.2-4.2M12 11.7V21"/></svg>`;
+}
+
+function appendProjectGroup(title, projects) {
+  if (projects.length === 0) {
+    return;
+  }
+  const group = document.createElement('section');
+  group.className = 'project-group';
+  const header = document.createElement('header');
+  header.className = 'project-group-header';
+  const heading = document.createElement('h2');
+  heading.textContent = title;
+  const count = document.createElement('span');
+  count.textContent = String(projects.length);
+  header.append(heading, count);
+  const rows = document.createElement('div');
+  rows.className = 'project-group-rows';
+  projects.forEach((project) => rows.appendChild(renderProject(project)));
+  group.append(header, rows);
+  els.list.appendChild(group);
+}
+
 function renderDashboard(data) {
   latestPayload = data;
   const allProjects = data.projects || [];
@@ -343,10 +467,18 @@ function renderDashboard(data) {
   els.list.innerHTML = '';
 
   const runningCount = allProjects.filter((project) => project.status === 'running').length;
-  els.runningSummary.textContent = `${allProjects.length} 项目 · ${runningCount} 运行中`;
+  const attentionCount = allProjects.filter((project) => project.status === 'error').length;
+  const autoStartCount = allProjects.filter((project) => project.startOnPanelLaunch).length;
+  els.runningSummary.textContent = `${allProjects.length} 个项目 · ${runningCount} 个运行中`;
+  els.runningMetric.textContent = String(runningCount);
+  els.autoStartMetric.textContent = String(autoStartCount);
+  els.attentionMetric.textContent = String(attentionCount);
+  els.healthSummary.textContent = attentionCount > 0 ? '需要关注' : allProjects.length > 0 ? '良好' : '等待项目';
+  els.healthIndicator.dataset.state = attentionCount > 0 ? 'attention' : allProjects.length > 0 ? 'healthy' : 'idle';
   els.configPath.textContent = data.configPath || '-';
   els.statePath.textContent = data.statePath || '-';
   els.updatedAt.textContent = formatTimestamp(data.updatedAt);
+  els.updatedAtCompact.textContent = `最后刷新 ${formatTimestamp(data.updatedAt)}`;
   els.loginToggle.checked = Boolean(data.openAtLogin);
   const loginItemStatus = data.loginItemStatus || {};
   if (loginItemStatus.status === 'enabled') {
@@ -364,9 +496,13 @@ function renderDashboard(data) {
       : '没有符合当前搜索或筛选条件的项目。';
     els.list.appendChild(empty);
   } else {
-    projects.forEach((project) => {
-      els.list.appendChild(renderProject(project));
-    });
+    const autoStartProjects = projects.filter((project) => project.startOnPanelLaunch);
+    const remainingProjects = projects.filter((project) => !project.startOnPanelLaunch);
+    appendProjectGroup('随面板启动', autoStartProjects);
+    appendProjectGroup('运行中', remainingProjects.filter((project) => project.status === 'running'));
+    appendProjectGroup('状态变化', remainingProjects.filter((project) => ['starting', 'stopping'].includes(project.status)));
+    appendProjectGroup('需要关注', remainingProjects.filter((project) => project.status === 'error'));
+    appendProjectGroup('已停止', remainingProjects.filter((project) => project.status === 'stopped'));
   }
 
   renderRoots(data.config);
@@ -457,6 +593,15 @@ els.projectEditorForm.addEventListener('submit', async (event) => {
   }
 });
 window.addEventListener('keydown', (event) => {
+  const activeModal = !els.projectEditorModal.classList.contains('hidden')
+    ? els.projectEditorModal
+    : !els.settingsModal.classList.contains('hidden')
+      ? els.settingsModal
+      : null;
+  if (event.key === 'Tab' && activeModal) {
+    trapModalFocus(event, activeModal);
+    return;
+  }
   if (event.key === 'Escape') {
     if (!els.projectEditorModal.classList.contains('hidden')) {
       closeProjectEditor();

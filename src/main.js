@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { exec, execFile, spawn } = require('child_process');
 
 const APP_NAME = 'Control Panel';
@@ -9,6 +10,8 @@ const DEFAULT_REFRESH_MS = 5000;
 const STATUS_COMMAND_TIMEOUT_MS = 8000;
 const DEFAULT_SCAN_DEPTH = 1;
 const DEFAULT_MANIFEST_NAME = 'control-panel.json';
+const PROJECT_ICON_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+const MAX_PROJECT_ICON_BYTES = 5 * 1024 * 1024;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
 const APP_ICON_PATH = path.join(app.getAppPath(), 'assets', 'app-icon.png');
 const TRAY_ICON_PATH = path.join(app.getAppPath(), 'assets', 'tray-icon-template.svg');
@@ -73,10 +76,19 @@ function normalizeConfig(config) {
     if (
       (projectKey.startsWith('manifest:') || projectKey.startsWith('legacy:')) &&
       preference &&
-      typeof preference === 'object' &&
-      preference.startOnPanelLaunch === true
+      typeof preference === 'object'
     ) {
-      projectPreferences[projectKey] = { startOnPanelLaunch: true };
+      const normalizedPreference = {};
+      if (preference.startOnPanelLaunch === true) {
+        normalizedPreference.startOnPanelLaunch = true;
+      }
+      const iconOverride = path.basename(String(preference.iconOverride || ''));
+      if (/^[a-f0-9]{64}\.png$/.test(iconOverride)) {
+        normalizedPreference.iconOverride = iconOverride;
+      }
+      if (Object.keys(normalizedPreference).length > 0) {
+        projectPreferences[projectKey] = normalizedPreference;
+      }
     }
   }
   return {
@@ -96,6 +108,81 @@ function isPanelProject(project) {
 
 function startsWithPanel(config, projectKey) {
   return config.projectPreferences?.[projectKey]?.startOnPanelLaunch === true;
+}
+
+function getProjectIconsDir() {
+  return path.join(app.getPath('userData'), 'project-icons');
+}
+
+function projectIconFilename(projectKey) {
+  return `${crypto.createHash('sha256').update(projectKey).digest('hex')}.png`;
+}
+
+function safeProjectIconPath(projectDir, iconValue) {
+  const value = String(iconValue || '').trim();
+  if (!value || path.isAbsolute(value) || !PROJECT_ICON_EXTENSIONS.has(path.extname(value).toLowerCase())) {
+    return '';
+  }
+  const root = path.resolve(projectDir);
+  const resolved = path.resolve(root, value);
+  if (resolved === root || !resolved.startsWith(`${root}${path.sep}`)) {
+    return '';
+  }
+  try {
+    const canonicalRoot = fs.realpathSync(root);
+    const canonicalIcon = fs.realpathSync(resolved);
+    if (!canonicalIcon.startsWith(`${canonicalRoot}${path.sep}`)) {
+      return '';
+    }
+    const stat = fs.statSync(canonicalIcon);
+    return stat.isFile() && stat.size <= MAX_PROJECT_ICON_BYTES ? canonicalIcon : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function squareProjectIcon(image, size) {
+  const sourceSize = image.getSize();
+  const scale = Math.max(size / sourceSize.width, size / sourceSize.height);
+  const width = Math.max(size, Math.round(sourceSize.width * scale));
+  const height = Math.max(size, Math.round(sourceSize.height * scale));
+  const resized = image.resize({ width, height, quality: 'best' });
+  return resized.crop({
+    x: Math.floor((width - size) / 2),
+    y: Math.floor((height - size) / 2),
+    width: size,
+    height: size,
+  });
+}
+
+function iconDataUrlFromPath(iconPath) {
+  if (!iconPath) {
+    return '';
+  }
+  try {
+    const image = nativeImage.createFromPath(iconPath);
+    if (image.isEmpty()) {
+      return '';
+    }
+    return squareProjectIcon(image, 64).toDataURL();
+  } catch (error) {
+    return '';
+  }
+}
+
+function resolveProjectIcon(project, config) {
+  const overrideName = config.projectPreferences?.[project.key]?.iconOverride || '';
+  const overridePath = overrideName ? path.join(getProjectIconsDir(), path.basename(overrideName)) : '';
+  const overrideDataUrl = iconDataUrlFromPath(overridePath);
+  if (overrideDataUrl) {
+    return { iconDataUrl: overrideDataUrl, iconSource: 'user' };
+  }
+  const manifestIconPath = safeProjectIconPath(project.projectDir, project.icon);
+  const manifestDataUrl = iconDataUrlFromPath(manifestIconPath);
+  if (manifestDataUrl) {
+    return { iconDataUrl: manifestDataUrl, iconSource: 'project' };
+  }
+  return { iconDataUrl: '', iconSource: 'fallback' };
 }
 
 function cleanText(value, maxLength, fieldName, { required = false } = {}) {
@@ -599,6 +686,8 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     key: `manifest:${manifestPath}`,
     id,
     name,
+    icon: String(manifest.icon || ''),
+    surfaceType: String(manifest.surfaceType || ''),
     workingDirectory,
     startCommand,
     stopCommand,
@@ -625,6 +714,8 @@ function buildProjectFromLegacyEntry(entry) {
     key: `legacy:${workingDirectory}:${entry.id || slugify(name)}`,
     id: String(entry.id || slugify(name)),
     name,
+    icon: String(entry.icon || ''),
+    surfaceType: String(entry.surfaceType || ''),
     workingDirectory,
     startCommand: String(entry.startCommand || ''),
     stopCommand: String(entry.stopCommand || ''),
@@ -772,8 +863,10 @@ async function collectProjectsSnapshot() {
     discovered.map(async (project) => {
       const status = await getProjectStatus(project);
       const state = projectState[project.key] || {};
+      const icon = resolveProjectIcon(project, config);
       return {
         ...project,
+        ...icon,
         startOnPanelLaunch: startsWithPanel(config, project.key),
         canStartOnPanelLaunch: Boolean(project.startCommand) && !isPanelProject(project),
         usageCount: Number(state.usageCount || 0),
@@ -1305,11 +1398,95 @@ async function setProjectStartOnPanelLaunch(projectKey, enable) {
   const config = loadConfig();
   const projectPreferences = { ...config.projectPreferences };
   if (enable) {
-    projectPreferences[project.key] = { startOnPanelLaunch: true };
+    projectPreferences[project.key] = {
+      ...(projectPreferences[project.key] || {}),
+      startOnPanelLaunch: true,
+    };
+  } else {
+    const nextPreference = { ...(projectPreferences[project.key] || {}) };
+    delete nextPreference.startOnPanelLaunch;
+    if (Object.keys(nextPreference).length > 0) {
+      projectPreferences[project.key] = nextPreference;
+    } else {
+      delete projectPreferences[project.key];
+    }
+  }
+  saveConfig({ ...config, projectPreferences });
+  await refreshAll();
+  return true;
+}
+
+async function chooseProjectIcon(projectKey) {
+  const project = findProjectByKey(projectKey);
+  if (!project) {
+    throw new Error('项目不存在，请刷新后重试。');
+  }
+  const result = await dialog.showOpenDialog({
+    title: `为 ${project.name} 选择图标`,
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+  });
+  if (result.canceled || !result.filePaths[0]) {
+    return false;
+  }
+
+  const sourcePath = result.filePaths[0];
+  const stat = fs.statSync(sourcePath);
+  if (!stat.isFile() || stat.size > MAX_PROJECT_ICON_BYTES) {
+    throw new Error('图标文件不能超过 5 MB。');
+  }
+  const image = nativeImage.createFromPath(sourcePath);
+  if (image.isEmpty()) {
+    throw new Error('无法读取这张图片，请选择 PNG、JPEG 或 WebP。');
+  }
+
+  const iconFilename = projectIconFilename(project.key);
+  fs.mkdirSync(getProjectIconsDir(), { recursive: true });
+  const targetPath = path.join(getProjectIconsDir(), iconFilename);
+  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, squareProjectIcon(image, 128).toPNG());
+  fs.renameSync(tempPath, targetPath);
+
+  const config = loadConfig();
+  saveConfig({
+    ...config,
+    projectPreferences: {
+      ...config.projectPreferences,
+      [project.key]: {
+        ...(config.projectPreferences[project.key] || {}),
+        iconOverride: iconFilename,
+      },
+    },
+  });
+  await refreshAll();
+  return true;
+}
+
+async function resetProjectIcon(projectKey) {
+  const project = findProjectByKey(projectKey);
+  if (!project) {
+    throw new Error('项目不存在，请刷新后重试。');
+  }
+  const config = loadConfig();
+  const projectPreferences = { ...config.projectPreferences };
+  const nextPreference = { ...(projectPreferences[project.key] || {}) };
+  const iconOverride = nextPreference.iconOverride;
+  delete nextPreference.iconOverride;
+  if (Object.keys(nextPreference).length > 0) {
+    projectPreferences[project.key] = nextPreference;
   } else {
     delete projectPreferences[project.key];
   }
   saveConfig({ ...config, projectPreferences });
+  if (iconOverride) {
+    try {
+      fs.unlinkSync(path.join(getProjectIconsDir(), path.basename(iconOverride)));
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
   await refreshAll();
   return true;
 }
@@ -1383,6 +1560,19 @@ function registerIpc() {
     return true;
   });
 
+  ipcMain.handle('open-project-folder', async (_event, folderPath) => {
+    const inputPath = String(folderPath || '').trim();
+    if (!inputPath) {
+      throw new Error('项目目录未配置。');
+    }
+    const resolvedPath = path.resolve(inputPath);
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error('项目目录不存在。');
+    }
+    await shell.openPath(resolvedPath);
+    return true;
+  });
+
   ipcMain.handle('choose-project-roots', async () => {
     return pickProjectRoots();
   });
@@ -1424,6 +1614,14 @@ function registerIpc() {
 
   ipcMain.handle('set-project-start-on-panel-launch', async (_event, projectKey, enable) => {
     return setProjectStartOnPanelLaunch(String(projectKey || ''), Boolean(enable));
+  });
+
+  ipcMain.handle('choose-project-icon', async (_event, projectKey) => {
+    return chooseProjectIcon(String(projectKey || ''));
+  });
+
+  ipcMain.handle('reset-project-icon', async (_event, projectKey) => {
+    return resetProjectIcon(String(projectKey || ''));
   });
 }
 
