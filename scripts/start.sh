@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$PROJECT_ROOT/scripts"
 STATE_DIR="$PROJECT_ROOT/.control-panel"
 PID_FILE="$STATE_DIR/control-panel.pid"
 LOG_FILE="$STATE_DIR/logs/control-panel.log"
@@ -23,20 +24,7 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
 fi
 
-(
-  set -euo pipefail
-  cleanup() {
-    if [[ -n "${APP_PID:-}" ]]; then
-      kill "$APP_PID" 2>/dev/null || true
-      wait "$APP_PID" 2>/dev/null || true
-    fi
-  }
-  trap cleanup EXIT INT TERM
-  cd "$PROJECT_ROOT"
-  "$ELECTRON_BIN" . &
-  APP_PID=$!
-  wait "$APP_PID"
-) >"$LOG_FILE" 2>&1 &
+nohup "$SCRIPT_DIR/run.sh" "$@" >"$LOG_FILE" 2>&1 &
 LAUNCHER_PID=$!
 echo "$LAUNCHER_PID" > "$PID_FILE"
 
@@ -47,6 +35,6 @@ if kill -0 "$LAUNCHER_PID" 2>/dev/null; then
 fi
 
 rm -f "$PID_FILE"
-echo "控制面板启动失败。请查看 $LOG_FILE。" >&2
+echo "控制面板启动失败。请查看 ${LOG_FILE}。" >&2
 tail -n 40 "$LOG_FILE" >&2 || true
 exit 1

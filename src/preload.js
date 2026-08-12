@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('controlPanel', {
   saveProjectPresentation: (projectKey, input) => ipcRenderer.invoke('save-project-presentation', projectKey, input),
   openProjectFolder: (folderPath) => ipcRenderer.invoke('open-project-folder', folderPath),
   setOpenAtLogin: (enable) => ipcRenderer.invoke('set-open-at-login', enable),
+  setProjectStartOnPanelLaunch: (projectKey, enable) => (
+    ipcRenderer.invoke('set-project-start-on-panel-launch', projectKey, enable)
+  ),
   onProjectsUpdated: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on('projects-updated', listener);

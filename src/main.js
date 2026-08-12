@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { exec, spawn } = require('child_process');
+const { exec, execFile, spawn } = require('child_process');
 
 const APP_NAME = 'Control Panel';
 const CONFIG_ENV = 'CONTROL_PANEL_CONFIG';
@@ -12,6 +12,17 @@ const DEFAULT_MANIFEST_NAME = 'control-panel.json';
 const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
 const APP_ICON_PATH = path.join(app.getAppPath(), 'assets', 'app-icon.png');
 const TRAY_ICON_PATH = path.join(app.getAppPath(), 'assets', 'tray-icon-template.svg');
+const LOGIN_ITEM_SCRIPTS = {
+  install: path.join(app.getAppPath(), 'scripts', 'install-login-item.sh'),
+  uninstall: path.join(app.getAppPath(), 'scripts', 'uninstall-login-item.sh'),
+  status: path.join(app.getAppPath(), 'scripts', 'login-item-status.sh'),
+};
+const SHOULD_START_HIDDEN = process.argv.includes('--hidden');
+const HAS_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
+
+if (!HAS_SINGLE_INSTANCE_LOCK) {
+  app.quit();
+}
 
 let tray = null;
 let windowRef = null;
@@ -31,6 +42,7 @@ function defaultConfig() {
       maxDepth: DEFAULT_SCAN_DEPTH,
     },
     projects: [],
+    projectPreferences: {},
   };
 }
 
@@ -53,6 +65,20 @@ function normalizeList(values) {
 function normalizeConfig(config) {
   const base = { ...defaultConfig(), ...(config || {}) };
   const scan = base.scan && typeof base.scan === 'object' ? base.scan : {};
+  const rawPreferences = base.projectPreferences && typeof base.projectPreferences === 'object'
+    ? base.projectPreferences
+    : {};
+  const projectPreferences = {};
+  for (const [projectKey, preference] of Object.entries(rawPreferences)) {
+    if (
+      (projectKey.startsWith('manifest:') || projectKey.startsWith('legacy:')) &&
+      preference &&
+      typeof preference === 'object' &&
+      preference.startOnPanelLaunch === true
+    ) {
+      projectPreferences[projectKey] = { startOnPanelLaunch: true };
+    }
+  }
   return {
     roots: normalizeList(base.roots),
     scan: {
@@ -60,7 +86,16 @@ function normalizeConfig(config) {
       maxDepth: Math.max(0, Number.isFinite(Number(scan.maxDepth)) ? Number(scan.maxDepth) : DEFAULT_SCAN_DEPTH),
     },
     projects: Array.isArray(base.projects) ? base.projects : [],
+    projectPreferences,
   };
+}
+
+function isPanelProject(project) {
+  return path.resolve(project.projectDir || project.workingDirectory) === path.resolve(app.getAppPath());
+}
+
+function startsWithPanel(config, projectKey) {
+  return config.projectPreferences?.[projectKey]?.startOnPanelLaunch === true;
 }
 
 function cleanText(value, maxLength, fieldName, { required = false } = {}) {
@@ -131,7 +166,9 @@ function readJson(filePath, fallback) {
 }
 
 function writeJson(filePath, value) {
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(value, null, 2) + '\n');
+  fs.renameSync(tempPath, filePath);
 }
 
 function ensureUserFiles() {
@@ -737,6 +774,8 @@ async function collectProjectsSnapshot() {
       const state = projectState[project.key] || {};
       return {
         ...project,
+        startOnPanelLaunch: startsWithPanel(config, project.key),
+        canStartOnPanelLaunch: Boolean(project.startCommand) && !isPanelProject(project),
         usageCount: Number(state.usageCount || 0),
         lastStartedAt: String(state.lastStartedAt || ''),
         ...status,
@@ -918,6 +957,7 @@ async function refreshAll() {
 
   refreshInFlight = (async () => {
     const { config, projects } = await collectProjectsSnapshot();
+    const loginItem = await getLoginItemStatus();
     const payload = {
       config,
       projects,
@@ -925,7 +965,8 @@ async function refreshAll() {
       statePath: getStatePath(),
       updatedAt: new Date().toISOString(),
       trayUpdatedAt: trayMenuBuiltAt,
-      openAtLogin: app.getLoginItemSettings ? app.getLoginItemSettings().openAtLogin : false,
+      openAtLogin: loginItem.enabled,
+      loginItemStatus: loginItem,
     };
 
     if (windowRef && !windowRef.isDestroyed()) {
@@ -980,11 +1021,17 @@ function createWindow() {
     });
   });
 
+  win.on('closed', () => {
+    if (windowRef === win) {
+      windowRef = null;
+    }
+  });
+
   return win;
 }
 
 function showWindow() {
-  if (!windowRef) {
+  if (!windowRef || windowRef.isDestroyed()) {
     windowRef = createWindow();
   }
 
@@ -1191,18 +1238,90 @@ async function openProjectRepository(projectKey) {
   });
 }
 
+function runLoginItemScript(scriptPath) {
+  return new Promise((resolve) => {
+    execFile(
+      '/bin/bash',
+      [scriptPath],
+      {
+        cwd: app.getAppPath(),
+        env: process.env,
+        timeout: STATUS_COMMAND_TIMEOUT_MS,
+      },
+      (error, stdout, stderr) => {
+        resolve(normalizeCommandResult({
+          code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+          stdout,
+          stderr: error?.killed
+            ? `${stderr || ''}\n命令超时（${STATUS_COMMAND_TIMEOUT_MS / 1000} 秒）`.trim()
+            : stderr,
+        }));
+      }
+    );
+  });
+}
+
+async function getLoginItemStatus() {
+  const result = await runLoginItemScript(LOGIN_ITEM_SCRIPTS.status);
+  const detail = result.stdout.trim() || result.stderr.trim();
+  if (result.code === 0) {
+    return { enabled: true, status: 'enabled', detail };
+  }
+  if (result.code === 1 && detail === 'disabled') {
+    return { enabled: false, status: 'disabled', detail };
+  }
+  if (result.code === 2 && detail === 'stale') {
+    return { enabled: false, status: 'stale', detail: '登录项指向了旧的项目路径，请重新启用。' };
+  }
+  if (result.code === 3 && detail === 'not-loaded') {
+    return { enabled: false, status: 'error', detail: '登录项文件已存在，但 launchd 没有加载它，请重新启用。' };
+  }
+  return { enabled: false, status: 'error', detail: detail || '无法读取登录项状态。' };
+}
+
 async function toggleAutoLaunch(enable) {
-  if (!app.setLoginItemSettings) {
-    return false;
+  const scriptPath = enable ? LOGIN_ITEM_SCRIPTS.install : LOGIN_ITEM_SCRIPTS.uninstall;
+  const result = await runLoginItemScript(scriptPath);
+  if (result.code !== 0) {
+    throw new Error(result.stderr.trim() || result.stdout.trim() || '更新登录项失败。');
   }
 
-  app.setLoginItemSettings({
-    openAtLogin: enable,
-    path: app.getPath('exe'),
-    args: ['--hidden'],
-  });
+  const status = await getLoginItemStatus();
+  if (status.enabled !== enable) {
+    throw new Error(status.detail || '登录项状态与设置不一致。');
+  }
+  return status;
+}
 
+async function setProjectStartOnPanelLaunch(projectKey, enable) {
+  const project = findProjectByKey(projectKey);
+  if (!project) {
+    throw new Error('项目不存在，请刷新后重试。');
+  }
+  if (enable && (!project.startCommand || isPanelProject(project))) {
+    throw new Error(isPanelProject(project) ? '控制面板不能将自己设为随面板启动。' : '该项目没有可用的启动命令。');
+  }
+
+  const config = loadConfig();
+  const projectPreferences = { ...config.projectPreferences };
+  if (enable) {
+    projectPreferences[project.key] = { startOnPanelLaunch: true };
+  } else {
+    delete projectPreferences[project.key];
+  }
+  saveConfig({ ...config, projectPreferences });
+  await refreshAll();
   return true;
+}
+
+async function startConfiguredProjects() {
+  const configuredProjects = projectsCache.filter((project) => (
+    project.startOnPanelLaunch && project.canStartOnPanelLaunch && project.status !== 'running'
+  ));
+
+  for (const project of configuredProjects) {
+    await startProject(project.key);
+  }
 }
 
 async function pickProjectRoots() {
@@ -1302,44 +1421,58 @@ function registerIpc() {
   ipcMain.handle('set-open-at-login', async (_event, enable) => {
     return toggleAutoLaunch(Boolean(enable));
   });
+
+  ipcMain.handle('set-project-start-on-panel-launch', async (_event, projectKey, enable) => {
+    return setProjectStartOnPanelLaunch(String(projectKey || ''), Boolean(enable));
+  });
 }
 
-app.whenReady().then(async () => {
-  ensureUserFiles();
-  loadConfig();
-  loadState();
-  registerIpc();
-
-  if (process.platform === 'darwin' && app.dock) {
-    app.dock.setIcon(appIconImage());
-  }
-
-  windowRef = createWindow();
-
-  const trayImage = trayIconImage().resize({ width: 18, height: 18 });
-  trayImage.setTemplateImage(true);
-  tray = new Tray(trayImage);
-  if (process.platform === 'darwin') {
-    tray.setTitle('CP');
-  }
-  tray.setToolTip(APP_NAME);
-  tray.on('click', () => {
-    if (windowRef && windowRef.isVisible()) {
-      windowRef.hide();
-    } else {
-      showWindow();
-    }
-  });
-
-  await refreshAll();
-  if (windowRef && !windowRef.isVisible()) {
-    windowRef.show();
-    windowRef.focus();
-  }
-  refreshTimer = setInterval(() => {
-    refreshAll().catch(() => {});
-  }, DEFAULT_REFRESH_MS);
+app.on('second-instance', () => {
+  showWindow();
 });
+
+if (HAS_SINGLE_INSTANCE_LOCK) {
+  app.whenReady().then(async () => {
+    ensureUserFiles();
+    loadConfig();
+    loadState();
+    registerIpc();
+
+    if (process.platform === 'darwin' && app.dock) {
+      app.dock.setIcon(appIconImage());
+      if (SHOULD_START_HIDDEN) {
+        app.dock.hide();
+      }
+    }
+
+    windowRef = createWindow();
+
+    const trayImage = trayIconImage().resize({ width: 18, height: 18 });
+    trayImage.setTemplateImage(true);
+    tray = new Tray(trayImage);
+    if (process.platform === 'darwin') {
+      tray.setTitle('CP');
+    }
+    tray.setToolTip(APP_NAME);
+    tray.on('click', () => {
+      if (windowRef && windowRef.isVisible()) {
+        windowRef.hide();
+      } else {
+        showWindow();
+      }
+    });
+
+    await refreshAll();
+    await startConfiguredProjects();
+    if (!SHOULD_START_HIDDEN && windowRef && !windowRef.isVisible()) {
+      windowRef.show();
+      windowRef.focus();
+    }
+    refreshTimer = setInterval(() => {
+      refreshAll().catch(() => {});
+    }, DEFAULT_REFRESH_MS);
+  });
+}
 
 app.on('window-all-closed', (event) => {
   event.preventDefault();

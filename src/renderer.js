@@ -14,6 +14,7 @@ const els = {
   configBtn: document.getElementById('configBtn'),
   configFileBtn: document.getElementById('configFileBtn'),
   loginToggle: document.getElementById('loginToggle'),
+  loginItemStatus: document.getElementById('loginItemStatus'),
   settingsModal: document.getElementById('settingsModal'),
   closeSettingsBtn: document.getElementById('closeSettingsBtn'),
   projectEditorModal: document.getElementById('projectEditorModal'),
@@ -238,6 +239,8 @@ function renderProject(project) {
   const repositoryBtn = fragment.querySelector('.repository-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
   const projectConfigBtn = fragment.querySelector('.project-config-btn');
+  const panelStartBtn = fragment.querySelector('.panel-start-btn');
+  const panelStart = fragment.querySelector('.project-panel-start');
 
   const outputText = project.details || project.lastOutput || '';
   name.textContent = project.name;
@@ -252,6 +255,7 @@ function renderProject(project) {
   lastStarted.textContent = project.lastStartedAt ? formatTimestamp(project.lastStartedAt) : '-';
   pid.textContent = project.pid ? String(project.pid) : '-';
   source.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '来源：手动配置';
+  panelStart.textContent = project.startOnPanelLaunch ? '已启用' : '未启用';
   root.textContent = project.root || '未配置';
   dir.textContent = project.projectDir || project.workingDirectory || '未配置';
   details.hidden = !project.pid && !outputText && !project.root && !(project.projectDir || project.workingDirectory);
@@ -269,6 +273,11 @@ function renderProject(project) {
   repositoryBtn.disabled = !project.projectDir;
   projectConfigBtn.disabled = !project.manifestPath;
   projectConfigBtn.title = project.manifestPath ? '编辑项目展示信息' : '手工项目没有 control-panel.json，不能在此编辑';
+  panelStartBtn.disabled = !project.canStartOnPanelLaunch;
+  panelStartBtn.textContent = project.startOnPanelLaunch ? '取消随面板启动' : '随面板启动';
+  panelStartBtn.title = project.canStartOnPanelLaunch
+    ? '设置保存在 Control Panel 自己的配置中'
+    : '控制面板自身或没有启动命令的项目不支持此设置';
 
   const isRunning = project.status === 'running';
   const isTransitioning = project.status === 'starting' || project.status === 'stopping';
@@ -309,6 +318,17 @@ function renderProject(project) {
 
   projectConfigBtn.addEventListener('click', () => openProjectEditor(project));
 
+  panelStartBtn.addEventListener('click', async () => {
+    panelStartBtn.disabled = true;
+    try {
+      await api.setProjectStartOnPanelLaunch(project.key, !project.startOnPanelLaunch);
+      await refresh();
+    } catch (error) {
+      els.runningSummary.textContent = `保存随面板启动设置失败：${String(error?.message || error)}`;
+      panelStartBtn.disabled = false;
+    }
+  });
+
   card.dataset.status = project.status;
   return fragment;
 }
@@ -328,6 +348,14 @@ function renderDashboard(data) {
   els.statePath.textContent = data.statePath || '-';
   els.updatedAt.textContent = formatTimestamp(data.updatedAt);
   els.loginToggle.checked = Boolean(data.openAtLogin);
+  const loginItemStatus = data.loginItemStatus || {};
+  if (loginItemStatus.status === 'enabled') {
+    els.loginItemStatus.textContent = '已启用：登录后在菜单栏静默启动';
+  } else if (loginItemStatus.status === 'stale' || loginItemStatus.status === 'error') {
+    els.loginItemStatus.textContent = loginItemStatus.detail || '登录项状态异常';
+  } else {
+    els.loginItemStatus.textContent = '未启用：登录后不自动启动';
+  }
   if (projects.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'project-empty-state';
@@ -442,6 +470,9 @@ els.loginToggle.addEventListener('change', async (event) => {
   try {
     await api.setOpenAtLogin(event.target.checked);
     await refresh();
+  } catch (error) {
+    els.loginToggle.checked = !event.target.checked;
+    els.loginItemStatus.textContent = String(error?.message || error || '更新登录项失败');
   } finally {
     els.loginToggle.disabled = false;
   }

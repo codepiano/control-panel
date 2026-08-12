@@ -70,8 +70,8 @@
         <section class="panel">
           <label class="toggle-row">
             <span>
-              <strong>开机自启</strong>
-              <small>登录后自动打开这个控制面板</small>
+              <strong>登录时启动</strong>
+              <small id="loginItemStatus">登录后在菜单栏静默启动这个控制面板</small>
             </span>
             <input id="loginToggle" type="checkbox" />
           </label>
@@ -182,6 +182,7 @@
                 <button class="restart-btn ghost">重新启动</button>
                 <button class="repository-btn ghost">打开仓库</button>
                 <button class="folder-btn ghost">在 Finder 中打开</button>
+                <button class="panel-start-btn ghost">随面板启动</button>
                 <button class="project-config-btn ghost">编辑展示信息</button>
               </div>
             </details>
@@ -204,6 +205,10 @@
             <div class="meta-field">
               <span class="label">来源</span>
               <span class="project-source value"></span>
+            </div>
+            <div class="meta-field">
+              <span class="label">随面板启动</span>
+              <span class="project-panel-start value"></span>
             </div>
             <div class="meta-field">
               <span class="label">所在目录</span>

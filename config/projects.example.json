@@ -9,5 +9,6 @@
   "scan": {
     "manifestName": "control-panel.json",
     "maxDepth": 1
-  }
+  },
+  "projectPreferences": {}
 }

@@ -20,7 +20,8 @@
 - 统计启动次数、最近启动时间和最近状态输出
 - 图形化编辑项目展示名称、访问地址/端口和备注
 - 可将统一规范交给 AI，为已有项目生成安全的生命周期脚本
-- 支持开机自启与“只看运行中”筛选
+- 支持登录后静默启动与“只看运行中”筛选
+- 可按项目设置“随面板启动”，自动拉起需要常驻的本地服务
 
 ## 快速开始
 
@@ -142,7 +143,9 @@ project-root/
 
 ## Control Panel 自身配置
 
-首次启动时，应用会在 Electron 的 `userData` 目录创建 `projects.json`。这个文件只保存扫描根目录和 Control Panel 自身设置，不保存项目字段副本。
+首次启动时，应用会在 Electron 的 `userData` 目录创建 `projects.json`。这个文件只保存扫描根目录和 Control Panel 自身的使用偏好，不保存项目 manifest 字段的副本。
+
+“随面板启动”属于当前用户在这台 Mac 上的编排偏好，因此保存在 `projects.json` 的 `projectPreferences` 中，不写入项目自身的 `control-panel.json`，也不属于 Project Tooling Spec。面板进程每次启动时，只会拉起已开启该偏好且当前未运行的项目。
 
 如需自定义它的位置：
 
@@ -151,6 +154,20 @@ CONTROL_PANEL_CONFIG=/path/to/projects.json npm start
 ```
 
 示例结构见 [config/projects.example.json](./config/projects.example.json)。
+
+### 源码模式的登录时启动
+
+设置页的“登录时启动”会在 `~/Library/LaunchAgents` 安装当前源码目录专用的 LaunchAgent。登录后它会调用 `scripts/start.sh --hidden`，仅在菜单栏启动 Control Panel，不弹出主窗口。
+
+也可在终端中直接管理：
+
+```bash
+./scripts/install-login-item.sh
+./scripts/login-item-status.sh
+./scripts/uninstall-login-item.sh
+```
+
+如果移动了项目目录，需要在新目录重新启用一次登录项。
 
 ## 开发
 
