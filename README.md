@@ -19,6 +19,7 @@
 - 快速打开项目主页、仓库和本地目录
 - 统计启动次数、最近启动时间和最近状态输出
 - 图形化编辑项目展示名称、访问地址/端口和备注
+- 可将统一规范交给 AI，为已有项目生成安全的生命周期脚本
 - 支持开机自启与“只看运行中”筛选
 
 ## 快速开始
@@ -95,6 +96,24 @@ project-root/
 `statusCommand` 返回码为 `0` 表示运行中；非 `0` 表示已停止、失败或不可用。
 
 完整的字段、生命周期和进程归属规则请见 [Project Tooling Spec](https://github.com/codepiano/project-tooling/blob/main/spec/PROJECT_TOOLING_SPEC.md)。
+
+## 让 AI 接入已有项目
+
+`control-panel-tooling` 的存在，就是为了让项目接入这件事可交给 AI 完成，而不是为每个仓库手写一套互不兼容的启动脚本。
+
+把下面的信息一起交给 AI：
+
+1. 项目仓库或项目根目录
+2. [Project Tooling Spec](https://github.com/codepiano/project-tooling/blob/main/spec/PROJECT_TOOLING_SPEC.md)
+3. 已有的 `control-panel.json`（如果存在）、启动说明和项目特有约束
+
+可以直接这样描述任务：
+
+> 请先阅读 Project Tooling Spec，再检查这个项目。为它生成或修复 `control-panel.json` 以及 `scripts/init.sh`、`scripts/install.sh`、`scripts/start.sh`、`scripts/stop.sh`、`scripts/status.sh`、`scripts/restart.sh` 等项目实际需要的脚本。保持项目原有的技术栈和命令；脚本只能管理该项目自身的进程，并在完成后给出可应用的 diff。
+
+规范要求 AI 优先复用项目已有命令和脚本，明确工作目录与进程归属，并让 `status` 用退出码表达状态。因此，生成结果可以被 Control Panel 自动发现和调用，也能在项目仓库中独立维护与审查。
+
+如果项目有自己的产品或技术规范，可在 manifest 中填写 `specUrl`；AI 应优先遵循该项目规范，再采用通用生命周期约定。
 
 ## 图形化编辑
 
