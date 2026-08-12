@@ -84,8 +84,8 @@ project-root/
 
 ## 给外部 AI 的规范
 
-如果你想把这个仓库发给其他 AI 生成项目脚本，可以直接分享这份规范：
+如果你想让其他 AI 生成项目脚本，请使用 `control-panel-tooling` 仓库中的唯一规范：
 
-- [Project Script Generation Spec](./PROJECT_SCRIPT_GENERATION_SPEC.md)
+- [Project Tooling Spec](https://github.com/codepiano/project-tooling/blob/main/spec/PROJECT_TOOLING_SPEC.md)
 
-把这个链接连同对应项目仓库、`control-panel.json` 或 `specUrl` 一起发给对方即可。
+把这个链接连同对应项目仓库、`control-panel.json` 或 `specUrl` 一起发给对方即可。控制面板仓库不再保留规范副本。
