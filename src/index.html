@@ -17,9 +17,8 @@
       </div>
       <div class="window-bar-right">
         <button id="refreshBtn" class="primary">刷新</button>
-        <button id="runningOnlyBtn" class="secondary">只看运行中</button>
-        <button id="configBtn" class="secondary">目录</button>
-        <button id="configFileBtn" class="secondary">配置</button>
+        <button id="configBtn" class="secondary">扫描目录</button>
+        <button id="configFileBtn" class="secondary">全局配置</button>
       </div>
     </header>
     <div class="shell">
@@ -27,6 +26,31 @@
         <div class="content-header">
           <div>
             <h2>项目列表 <span id="runningSummary" class="title-counts">0 项目 · 0 运行中</span></h2>
+          </div>
+          <div class="project-toolbar" aria-label="项目列表工具">
+            <label class="search-field">
+              <span class="sr-only">搜索项目</span>
+              <input id="projectSearch" type="search" placeholder="搜索项目或路径" autocomplete="off" />
+            </label>
+            <label class="select-field">
+              <span class="sr-only">按状态筛选</span>
+              <select id="statusFilter">
+                <option value="all">全部状态</option>
+                <option value="running">运行中</option>
+                <option value="stopped">已停止</option>
+                <option value="starting">启动中</option>
+                <option value="stopping">停止中</option>
+                <option value="error">错误</option>
+              </select>
+            </label>
+            <label class="select-field">
+              <span class="sr-only">排序方式</span>
+              <select id="sortProjects">
+                <option value="name">按名称</option>
+                <option value="status">运行状态优先</option>
+                <option value="recent">最近启动</option>
+              </select>
+            </label>
           </div>
         </div>
         <div id="projectList" class="grid"></div>
@@ -136,17 +160,32 @@
 
     <template id="projectTemplate">
       <section class="card">
-        <div class="card-top">
+        <div class="project-identity">
           <div class="project-headline">
-            <h3 class="project-name"></h3>
-            <p class="project-path"></p>
+            <div class="project-title-row">
+              <h3 class="project-name"></h3>
+              <span class="status-pill"></span>
+            </div>
+            <p class="project-notes"></p>
           </div>
-          <div class="card-top-tools">
-            <button class="detail-toggle ghost" type="button">详情</button>
-            <div class="status-pill" aria-hidden="true"></div>
+          <p class="project-output" role="status"></p>
+          <button class="detail-toggle ghost" type="button">查看详情</button>
+        </div>
+        <div class="project-controls">
+          <div class="card-actions">
+            <button class="primary-action"></button>
+            <button class="homepage-btn ghost">打开主页</button>
+            <details class="project-menu">
+              <summary>更多操作</summary>
+              <div class="project-menu-list">
+                <button class="restart-btn ghost">重新启动</button>
+                <button class="repository-btn ghost">打开仓库</button>
+                <button class="folder-btn ghost">在 Finder 中打开</button>
+                <button class="project-config-btn ghost">编辑展示信息</button>
+              </div>
+            </details>
           </div>
         </div>
-        <p class="project-notes"></p>
         <div class="project-details hidden">
           <div class="card-meta">
             <div class="meta-field">
@@ -178,15 +217,6 @@
               <span class="project-output value"></span>
             </div>
           </div>
-        </div>
-        <div class="card-actions">
-          <button class="start-btn">启动</button>
-          <button class="stop-btn ghost">停止</button>
-          <button class="restart-btn ghost">重启</button>
-          <button class="homepage-btn ghost">主页</button>
-          <button class="repository-btn ghost">仓库</button>
-          <button class="folder-btn ghost">目录</button>
-          <button class="project-config-btn ghost">配置</button>
         </div>
       </section>
     </template>

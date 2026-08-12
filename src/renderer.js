@@ -8,7 +8,9 @@ const els = {
   statePath: document.getElementById('statePath'),
   updatedAt: document.getElementById('updatedAt'),
   refreshBtn: document.getElementById('refreshBtn'),
-  runningOnlyBtn: document.getElementById('runningOnlyBtn'),
+  projectSearch: document.getElementById('projectSearch'),
+  statusFilter: document.getElementById('statusFilter'),
+  sortProjects: document.getElementById('sortProjects'),
   configBtn: document.getElementById('configBtn'),
   configFileBtn: document.getElementById('configFileBtn'),
   loginToggle: document.getElementById('loginToggle'),
@@ -29,7 +31,9 @@ const els = {
 };
 
 let latestPayload = null;
-let runningOnly = false;
+let projectSearchQuery = '';
+let statusFilter = 'all';
+let projectSort = 'name';
 let refreshInFlight = false;
 let editingProject = null;
 
@@ -55,6 +59,49 @@ function statusLabel(status) {
     default:
       return '已停止';
   }
+}
+
+function statusSummary(project, outputText) {
+  if (project.status === 'error') {
+    return outputText ? `错误：${outputText}` : '错误：请打开详情查看最近状态。';
+  }
+
+  if (project.status === 'starting' || project.status === 'stopping') {
+    return `${statusLabel(project.status)}：正在执行生命周期命令。`;
+  }
+
+  return outputText || '';
+}
+
+function projectMatchesSearch(project, query) {
+  if (!query) {
+    return true;
+  }
+
+  const haystack = [project.name, project.notes, project.root, project.projectDir, project.workingDirectory]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase();
+  return haystack.includes(query);
+}
+
+function sortProjects(projects) {
+  const statusOrder = { error: 0, starting: 1, stopping: 2, running: 3, stopped: 4 };
+  return [...projects].sort((left, right) => {
+    if (projectSort === 'status') {
+      const difference = (statusOrder[left.status] ?? 99) - (statusOrder[right.status] ?? 99);
+      if (difference) {
+        return difference;
+      }
+    }
+    if (projectSort === 'recent') {
+      const difference = new Date(right.lastStartedAt || 0) - new Date(left.lastStartedAt || 0);
+      if (difference) {
+        return difference;
+      }
+    }
+    return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+  });
 }
 
 function openSettings() {
@@ -174,7 +221,6 @@ function renderProject(project) {
   const fragment = els.template.content.cloneNode(true);
   const card = fragment.querySelector('.card');
   const name = fragment.querySelector('.project-name');
-  const pathNode = fragment.querySelector('.project-path');
   const notes = fragment.querySelector('.project-notes');
   const details = fragment.querySelector('.project-details');
   const detailToggle = fragment.querySelector('.detail-toggle');
@@ -186,24 +232,21 @@ function renderProject(project) {
   const root = fragment.querySelector('.project-root');
   const dir = fragment.querySelector('.project-dir');
   const output = fragment.querySelector('.project-output');
-  const startBtn = fragment.querySelector('.start-btn');
-  const stopBtn = fragment.querySelector('.stop-btn');
+  const primaryAction = fragment.querySelector('.primary-action');
   const restartBtn = fragment.querySelector('.restart-btn');
   const homepageBtn = fragment.querySelector('.homepage-btn');
   const repositoryBtn = fragment.querySelector('.repository-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
   const projectConfigBtn = fragment.querySelector('.project-config-btn');
 
-  const summaryText = project.notes || '未填写说明';
   const outputText = project.details || project.lastOutput || '';
-  name.textContent = `${project.name} · ${summaryText}`;
-  pathNode.textContent = outputText || '';
-  notes.textContent = '';
-  pathNode.hidden = !outputText;
-  notes.hidden = true;
-  status.textContent = '';
+  name.textContent = project.name;
+  notes.textContent = project.notes || '未填写说明';
+  output.textContent = statusSummary(project, outputText);
+  output.hidden = !output.textContent;
+  status.textContent = statusLabel(project.status);
   status.dataset.status = project.status;
-  status.title = statusLabel(project.status);
+  status.title = `当前状态：${statusLabel(project.status)}`;
   status.setAttribute('aria-label', statusLabel(project.status));
   usage.textContent = String(project.usageCount || 0);
   lastStarted.textContent = project.lastStartedAt ? formatTimestamp(project.lastStartedAt) : '-';
@@ -211,34 +254,34 @@ function renderProject(project) {
   source.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '来源：手动配置';
   root.textContent = project.root || '未配置';
   dir.textContent = project.projectDir || project.workingDirectory || '未配置';
-  output.textContent = outputText || '-';
   details.hidden = !project.pid && !outputText && !project.root && !(project.projectDir || project.workingDirectory);
   detailToggle.hidden = details.hidden;
 
   detailToggle.addEventListener('click', () => {
     const expanded = !details.classList.contains('hidden');
     details.classList.toggle('hidden', expanded);
-    detailToggle.textContent = expanded ? '详情' : '收起';
+    detailToggle.textContent = expanded ? '查看详情' : '收起详情';
     detailToggle.classList.toggle('is-active', !expanded);
   });
 
-  startBtn.disabled = project.status === 'running' || project.status === 'starting';
-  stopBtn.disabled = project.status === 'stopped' || project.status === 'stopping';
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
   homepageBtn.disabled = !(project.frontendUrl || project.homepageUrl || project.openHomepageCommand || project.projectDir);
   repositoryBtn.disabled = !project.projectDir;
   projectConfigBtn.disabled = !project.manifestPath;
   projectConfigBtn.title = project.manifestPath ? '编辑项目展示信息' : '手工项目没有 control-panel.json，不能在此编辑';
 
-  startBtn.addEventListener('click', async () => {
-    startBtn.disabled = true;
-    await api.startProject(project.key);
-    await refresh();
-  });
-
-  stopBtn.addEventListener('click', async () => {
-    stopBtn.disabled = true;
-    await api.stopProject(project.key);
+  const isRunning = project.status === 'running';
+  const isTransitioning = project.status === 'starting' || project.status === 'stopping';
+  primaryAction.textContent = isRunning ? '停止服务' : isTransitioning ? statusLabel(project.status) : '启动服务';
+  primaryAction.dataset.action = isRunning ? 'stop' : 'start';
+  primaryAction.disabled = isTransitioning;
+  primaryAction.addEventListener('click', async () => {
+    primaryAction.disabled = true;
+    if (isRunning) {
+      await api.stopProject(project.key);
+    } else {
+      await api.startProject(project.key);
+    }
     await refresh();
   });
 
@@ -273,7 +316,10 @@ function renderProject(project) {
 function renderDashboard(data) {
   latestPayload = data;
   const allProjects = data.projects || [];
-  const projects = runningOnly ? allProjects.filter((project) => project.status === 'running') : allProjects;
+  const query = projectSearchQuery.trim().toLocaleLowerCase();
+  const projects = sortProjects(allProjects.filter((project) => (
+    (statusFilter === 'all' || project.status === statusFilter) && projectMatchesSearch(project, query)
+  )));
   els.list.innerHTML = '';
 
   const runningCount = allProjects.filter((project) => project.status === 'running').length;
@@ -282,12 +328,18 @@ function renderDashboard(data) {
   els.statePath.textContent = data.statePath || '-';
   els.updatedAt.textContent = formatTimestamp(data.updatedAt);
   els.loginToggle.checked = Boolean(data.openAtLogin);
-  els.runningOnlyBtn.classList.toggle('is-active', runningOnly);
-  els.runningOnlyBtn.textContent = runningOnly ? '显示全部' : '只看运行中';
-
-  projects.forEach((project) => {
-    els.list.appendChild(renderProject(project));
-  });
+  if (projects.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'project-empty-state';
+    empty.textContent = allProjects.length === 0
+      ? '尚未发现项目。先添加扫描目录，再为项目放入 control-panel.json。'
+      : '没有符合当前搜索或筛选条件的项目。';
+    els.list.appendChild(empty);
+  } else {
+    projects.forEach((project) => {
+      els.list.appendChild(renderProject(project));
+    });
+  }
 
   renderRoots(data.config);
 }
@@ -326,8 +378,20 @@ async function refresh() {
 }
 
 els.refreshBtn.addEventListener('click', refresh);
-els.runningOnlyBtn.addEventListener('click', () => {
-  runningOnly = !runningOnly;
+els.projectSearch.addEventListener('input', (event) => {
+  projectSearchQuery = event.target.value;
+  if (latestPayload) {
+    renderDashboard(latestPayload);
+  }
+});
+els.statusFilter.addEventListener('change', (event) => {
+  statusFilter = event.target.value;
+  if (latestPayload) {
+    renderDashboard(latestPayload);
+  }
+});
+els.sortProjects.addEventListener('change', (event) => {
+  projectSort = event.target.value;
   if (latestPayload) {
     renderDashboard(latestPayload);
   }
