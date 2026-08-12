@@ -6,7 +6,12 @@
   "stopCommand": "./scripts/stop.sh",
   "statusCommand": "./scripts/status.sh",
   "restartCommand": "./scripts/restart.sh",
+  "openEntryCommand": "./scripts/open-homepage.sh",
   "openHomepageCommand": "./scripts/open-homepage.sh",
+  "surfaceType": "desktop",
+  "runtimeMode": "development",
+  "processMode": "managed",
   "homepageUrl": "https://github.com/codepiano/control-panel.git",
+  "specUrl": "https://github.com/codepiano/control-panel-spec/blob/main/spec/PROJECT_TOOLING_SPEC.md",
   "notes": "macOS 菜单栏项目中控"
 }

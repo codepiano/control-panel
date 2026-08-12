@@ -543,15 +543,18 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
   const statusCommand = String(
     manifest.statusCommand || manifest.status || scripts.status || resolveScriptFallback(projectDir, 'status') || ''
   );
-  const openHomepageCommand = String(
-    manifest.openHomepageCommand ||
+  const openEntryCommand = String(
+    manifest.openEntryCommand ||
+      manifest.openHomepageCommand ||
       manifest.openHomepage ||
+      scripts.openEntry ||
       scripts.openHomepage ||
       resolveScriptFallback(projectDir, 'open-homepage') ||
       ''
   );
   const homepageUrl = resolveHomepageUrl(manifest);
   const frontendUrl = resolveFrontendUrl(manifest);
+  const appLaunchCommand = String(manifest.appLaunchCommand || '');
   const repositoryUrl = resolveRepositoryUrl(manifest);
   const techStack = inferTechStack(projectDir, manifest);
 
@@ -563,9 +566,11 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     startCommand,
     stopCommand,
     statusCommand,
-    openHomepageCommand,
+    openEntryCommand,
+    openHomepageCommand: openEntryCommand,
     homepageUrl,
     frontendUrl,
+    appLaunchCommand,
     repositoryUrl,
     techStack,
     notes: String(manifest.notes || ''),
@@ -825,7 +830,7 @@ function buildTrayMenu(projects) {
       },
       { type: 'separator' },
       {
-        label: '打开主页',
+        label: '打开入口',
         enabled: Boolean(project.homepageUrl || project.openHomepageCommand || project.projectDir),
         click: () => openProjectHomepage(project.key),
       },
@@ -1107,6 +1112,11 @@ async function openProjectHomepage(projectKey) {
     return;
   }
 
+  if (project.openEntryCommand || project.openHomepageCommand) {
+    await execCommand(project.openEntryCommand || project.openHomepageCommand, project.workingDirectory);
+    return;
+  }
+
   if (project.frontendUrl) {
     await shell.openExternal(project.frontendUrl);
     return;
@@ -1118,8 +1128,8 @@ async function openProjectHomepage(projectKey) {
     return;
   }
 
-  if (project.openHomepageCommand) {
-    await execCommand(project.openHomepageCommand, project.workingDirectory);
+  if (project.appLaunchCommand) {
+    await execCommand(project.appLaunchCommand, project.workingDirectory);
     return;
   }
 
@@ -1144,8 +1154,8 @@ async function openProjectHomepage(projectKey) {
     type: 'info',
     buttons: ['OK'],
     title: APP_NAME,
-    message: '无法确定项目主页',
-    detail: '请在 control-panel.json 中配置 homepageUrl 或 openHomepageCommand，或者在 package.json / git remote 中提供可推断的主页地址。',
+    message: '无法确定项目入口',
+    detail: '请在 control-panel.json 中配置 frontendUrl、appUrl、openEntryCommand 或兼容字段 homepageUrl/openHomepageCommand。',
   });
 }
 

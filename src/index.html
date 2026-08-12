@@ -123,8 +123,9 @@
     status.sh</pre>
           <p>
             `control-panel.json` 支持字段：`name`、`id`、`workingDirectory`、`startCommand`、`stopCommand`、
-            `statusCommand`、`openHomepageCommand`、`frontendUrl`、`homepageUrl`、`notes`。也可以写成 `scripts.start`、
-            `scripts.stop`、`scripts.status`、`scripts.openHomepage`。
+            `statusCommand`、`openEntryCommand`、`surfaceType`、`runtimeMode`、`processMode`、`frontendUrl`、`appUrl`、
+            `appLaunchCommand`、`homepageUrl`、`metricsUrl`、`notes`。也可以写成 `scripts.start`、`scripts.stop`、
+            `scripts.status`、`scripts.openEntry`；`openHomepageCommand` 和 `scripts.openHomepage` 保留用于兼容旧项目。
           </p>
           <p>
             只要目录被加入扫描列表，面板就会检查根目录和每个直接子目录中的 `control-panel.json`，自动纳入控制。
@@ -174,7 +175,7 @@
         <div class="project-controls">
           <div class="card-actions">
             <button class="primary-action"></button>
-            <button class="homepage-btn ghost">打开主页</button>
+            <button class="homepage-btn ghost">打开入口</button>
             <details class="project-menu">
               <summary>更多操作</summary>
               <div class="project-menu-list">

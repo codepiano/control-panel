@@ -16,7 +16,7 @@ Control Panel is a local macOS menu-bar control center for discovering developme
 
 ## Positioning
 
-Rather than becoming another process manager or repository host, Control Panel discovers a small, project-owned `control-panel.json` contract and uses it to provide a shared, inspectable standard for local service management. Projects retain their own scripts; the panel supplies the common discovery and control surface.
+Rather than becoming another process manager or repository host, Control Panel discovers a small, project-owned `control-panel.json` contract and uses it to provide a shared, inspectable standard for local project integration. Projects retain their own scripts or external supervisor; the panel supplies the common discovery and control surface.
 
 ## Operating Context
 
@@ -25,9 +25,11 @@ Used locally on macOS while developing and maintaining multiple web apps, deskto
 ## Capabilities and Constraints
 
 - Automatically discovers projects from configured scan roots.
-- Shows service status and provides start, stop, restart, and quick-open actions.
+- Shows project runtime status and provides start, stop, restart, and primary-entry actions.
 - Lets users customize project display name, URL or port, and notes through the app; lifecycle fields remain project-owned.
-- Uses `control-panel.json` plus project scripts as the integration contract.
+- Uses `control-panel.json` plus project scripts or an external supervisor as the integration contract.
+- Supports web projects, desktop applications, hybrid projects, and services, including Electron development mode.
+- Distinguishes `managed`, `external`, and `observed` process modes instead of assuming every project is directly managed.
 - Runs locally and targets macOS only.
 - Does not take ownership of project repositories or upload project data.
 - Must remain quick to use and customizable.

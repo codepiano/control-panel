@@ -1,6 +1,6 @@
 # Control Panel
 
-一个面向 macOS 的本地项目中控：把散落在不同目录的开发项目放到同一个菜单栏入口，查看运行状态、启动、停止、重启，并快速打开项目主页、仓库或目录。
+一个面向 macOS 的本地项目中控：把散落在不同目录的开发项目放到同一个菜单栏入口，查看运行状态、启动、停止、重启，并快速打开项目主入口、仓库或目录。
 
 它不接管你的代码仓库，也不上传项目数据。每个项目仍通过自身的 `control-panel.json` 声明生命周期命令；Control Panel 只负责发现、展示和调用。
 
@@ -16,7 +16,7 @@
 - 常驻 macOS 菜单栏，可随时打开主面板
 - 按扫描目录自动发现项目，无需逐个手工登记
 - 统一查看状态，并一键启动、停止、重启
-- 快速打开项目主页、仓库和本地目录
+- 快速打开项目主入口、仓库和本地目录
 - 统计启动次数、最近启动时间和最近状态输出
 - 图形化编辑项目展示名称、访问地址/端口和备注
 - 可将统一规范交给 AI，为已有项目生成安全的生命周期脚本
@@ -60,6 +60,9 @@ Control Panel 会检查该目录本身和它的直接子目录中的 `control-pa
   "stopCommand": "./scripts/stop.sh",
   "statusCommand": "./scripts/status.sh",
   "restartCommand": "./scripts/restart.sh",
+  "surfaceType": "web",
+  "runtimeMode": "development",
+  "processMode": "managed",
   "frontendUrl": "http://127.0.0.1:3000",
   "notes": "本地开发 API"
 }
@@ -89,27 +92,37 @@ project-root/
 | `id` | 稳定标识，建议填写 |
 | `workingDirectory` | 执行命令时使用的目录 |
 | `startCommand` / `stopCommand` / `statusCommand` / `restartCommand` | 项目生命周期命令 |
-| `frontendUrl` | “主页”按钮打开的项目入口，端口属于此 URL |
-| `homepageUrl` | 项目主页或仓库地址的备用值 |
+| `surfaceType` | 项目主表面：`web`、`desktop`、`hybrid` 或 `service` |
+| `runtimeMode` | 运行方式：`development` 或 `packaged`，开发模式不要求打包 DMG |
+| `processMode` | 进程责任：`managed`、`external` 或 `observed` |
+| `frontendUrl` | Web 前端入口，适用于 `web` 或 `hybrid` 项目 |
+| `appUrl` | 桌面应用 URL、深链或其他应用入口 |
+| `appLaunchCommand` | 启动或聚焦桌面应用的命令 |
+| `openEntryCommand` | 打开、启动或聚焦项目主入口的命令 |
+| `homepageUrl` | 主入口不可用时的项目主页或仓库备用地址 |
+| `metricsUrl` | 项目自身提供的运行时 metrics JSON 接口 |
 | `notes` | 面板中的简短说明 |
 
-`statusCommand` 返回码为 `0` 表示运行中；非 `0` 表示已停止、失败或不可用。
+`statusCommand` 返回码为 `0` 表示运行中或健康；`1` 表示停止、失败或降级；`2` 表示不支持或配置无效；`3` 表示无法确认外部启动的状态。
 
-完整的字段、生命周期和进程归属规则请见 [Project Tooling Spec](https://github.com/codepiano/project-tooling/blob/main/spec/PROJECT_TOOLING_SPEC.md)。
+`managed` 表示项目脚本负责记录并管理自己的进程；`external` 表示交给 launchd、PM2、Docker 等外部 supervisor；`observed` 表示只观测、不提供可靠的启动和停止能力。禁止通过 `pkill node`、`pkill electron` 等宽泛命令猜测或终止进程。
+
+完整的字段、主入口、生命周期和进程归属规则请见 [Project Tooling Spec](https://github.com/codepiano/control-panel-spec/blob/main/spec/PROJECT_TOOLING_SPEC.md)。
 
 ## 让 AI 接入已有项目
 
-`control-panel-tooling` 的存在，就是为了让项目接入这件事可交给 AI 完成，而不是为每个仓库手写一套互不兼容的启动脚本。
+`project-tooling` Skill 的存在，就是为了让项目接入这件事可交给 AI 完成，而不是为每个仓库手写一套互不兼容的启动脚本。
 
 把下面的信息一起交给 AI：
 
 1. 项目仓库或项目根目录
-2. [Project Tooling Spec](https://github.com/codepiano/project-tooling/blob/main/spec/PROJECT_TOOLING_SPEC.md)
-3. 已有的 `control-panel.json`（如果存在）、启动说明和项目特有约束
+2. [Project Tooling Skill](https://github.com/codepiano/control-panel-spec/blob/main/SKILL.md)
+3. [Project Tooling Spec](https://github.com/codepiano/control-panel-spec/blob/main/spec/PROJECT_TOOLING_SPEC.md)
+4. 已有的 `control-panel.json`（如果存在）、启动说明和项目特有约束
 
 可以直接这样描述任务：
 
-> 请先阅读 Project Tooling Spec，再检查这个项目。为它生成或修复 `control-panel.json` 以及 `scripts/init.sh`、`scripts/install.sh`、`scripts/start.sh`、`scripts/stop.sh`、`scripts/status.sh`、`scripts/restart.sh` 等项目实际需要的脚本。保持项目原有的技术栈和命令；脚本只能管理该项目自身的进程，并在完成后给出可应用的 diff。
+> 请使用 Project Tooling Skill，先阅读规范再检查这个项目。为它生成或修复 `control-panel.json` 以及项目实际需要的生命周期脚本。识别 `surfaceType`、`runtimeMode` 和 `processMode`；Electron 开发模式也必须使用项目专属 PID、进程组或外部 supervisor，不能依赖前台阻塞命令或宽泛进程扫描。保持项目原有的技术栈和命令，并在完成后给出可应用的 diff 和验证结果。
 
 规范要求 AI 优先复用项目已有命令和脚本，明确工作目录与进程归属，并让 `status` 用退出码表达状态。因此，生成结果可以被 Control Panel 自动发现和调用，也能在项目仓库中独立维护与审查。
 
