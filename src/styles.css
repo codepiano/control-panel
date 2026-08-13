@@ -76,6 +76,7 @@ textarea:focus-visible {
 }
 
 .window-bar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -86,10 +87,19 @@ textarea:focus-visible {
   -webkit-app-region: no-drag;
 }
 
+.window-bar-drag-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  cursor: move;
+  -webkit-app-region: drag;
+}
+
 .window-bar-left,
-.window-bar-right { display: flex; align-items: center; gap: 9px; }
-.window-bar-drag { min-width: 0; flex: 1; cursor: move; -webkit-app-region: drag; }
-.brand-mark { width: 24px; height: 24px; object-fit: contain; filter: grayscale(1) brightness(1.5); opacity: 0.86; }
+.window-bar-right { position: relative; z-index: 1; display: flex; align-items: center; gap: 9px; pointer-events: none; }
+.window-bar-left { min-width: 0; flex: 1; }
+.window-bar-right button { pointer-events: auto; }
+.brand-mark { width: 24px; height: 24px; object-fit: contain; filter: grayscale(1) brightness(1.5); opacity: 0.86; -webkit-user-drag: none; }
 .brand-monogram { font-size: 18px; font-weight: 760; letter-spacing: -0.03em; }
 .brand-divider { width: 1px; height: 25px; margin: 0 5px; background: var(--line-strong); }
 .window-bar-title { display: flex; align-items: baseline; gap: 9px; }
