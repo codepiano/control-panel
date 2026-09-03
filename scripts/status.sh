@@ -11,7 +11,8 @@ if [[ ! -f "$PID_FILE" ]]; then
 fi
 
 LAUNCHER_PID="$(cat "$PID_FILE")"
-if [[ -n "$LAUNCHER_PID" ]] && kill -0 "$LAUNCHER_PID" 2>/dev/null; then
+COMMAND="$(ps -p "$LAUNCHER_PID" -o command= 2>/dev/null || true)"
+if [[ -n "$LAUNCHER_PID" ]] && kill -0 "$LAUNCHER_PID" 2>/dev/null && [[ "$COMMAND" == *"$PROJECT_ROOT"* ]]; then
   echo "控制面板运行中 (pid $LAUNCHER_PID)。"
   exit 0
 fi
