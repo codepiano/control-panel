@@ -6,7 +6,7 @@ const { exec, execFile, spawn } = require('child_process');
 
 const APP_NAME = 'Control Panel';
 const CONFIG_ENV = 'CONTROL_PANEL_CONFIG';
-const DEFAULT_REFRESH_MS = 5000;
+const DEFAULT_REFRESH_MS = 30000;
 const STATUS_COMMAND_TIMEOUT_MS = 8000;
 const DEFAULT_SCAN_DEPTH = 1;
 const DEFAULT_MANIFEST_NAME = 'control-panel.json';
