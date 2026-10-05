@@ -1,188 +1,110 @@
 # Control Panel
 
-一个面向 macOS 的本地项目中控：把散落在不同目录的开发项目放到同一个菜单栏入口，查看运行状态、启动、停止、重启，并快速打开项目主入口、仓库或目录。
+本机 Web 服务中控。浏览器负责展示与操作，Node.js 后端负责发现项目、保存配置和调用项目生命周期脚本；运行不需要 Electron，也没有第三方运行依赖。
 
-它不接管你的代码仓库，也不上传项目数据。每个项目仍通过自身的 `control-panel.json` 声明生命周期命令；Control Panel 只负责发现、展示和调用。
+## 启动
 
-## 适合什么场景
-
-- 本机同时维护多个 Web、桌面应用或本地服务
-- 不想记住每个项目的启动、停止和状态检查命令
-- 希望从菜单栏快速确认哪些项目正在运行
-- 希望用一份可复用的 manifest 约定连接项目与工具
-
-## 功能
-
-- 常驻 macOS 菜单栏，可随时打开主面板
-- 按扫描目录自动发现项目，无需逐个手工登记
-- 统一查看状态，并一键启动、停止、重启
-- 按项目图标、运行状态和本机启动偏好分组展示
-- 快速打开项目主入口、仓库和本地目录
-- 统计启动次数、最近启动时间和最近状态输出
-- 图形化编辑项目展示名称、访问地址/端口和备注
-- 可将统一规范交给 AI，为已有项目生成安全的生命周期脚本
-- 支持登录后静默启动与“只看运行中”筛选
-- 可按项目设置“随面板启动”，自动拉起需要常驻的本地服务
-
-## 快速开始
-
-### 1. 安装并启动
-
-需要已安装当前维护中的 Node.js 版本和 npm。
+需要 Node.js 22 或更新版本。
 
 ```bash
-git clone https://github.com/codepiano/control-panel.git
-cd control-panel
-npm install
 npm start
 ```
 
-应用启动后会显示主窗口，并在菜单栏保留 `CP` 图标。
+打开 [本机控制面板](http://127.0.0.1:4310)。后台运行可使用：
 
-### 2. 添加扫描目录
-
-在应用中点击“目录”，选择或输入一个项目集合目录，例如：
-
-```text
-/Users/you/Documents/projects
+```bash
+./scripts/start.sh
+./scripts/status.sh
+./scripts/stop.sh
+./scripts/restart.sh
+./scripts/open-homepage.sh
 ```
 
-Control Panel 会检查该目录本身和它的直接子目录中的 `control-panel.json`，找到后自动纳入面板。
+`npm run dev` 使用 Node 的 watch 模式，`npm test` 运行后端集成测试。
 
-### 3. 给项目添加 manifest
+## 分组、标记和批量启动
 
-在项目根目录创建 `control-panel.json`：
+- 服务的更多操作菜单提供“标记与分组”和星标；标签可用中英文逗号分隔。
+- 左侧切换工作区、个人分组、标签、运行中和星标视图；搜索也会匹配归属、标签、角色和路径。
+- 勾选任意服务后，底部出现“启动所选”和“批量归组”操作栏；也可直接启动当前筛选列表。
+- 分组标题提供“启动本组”，作用于该组当前显示的服务。
+- 选择“集合：名称（含子项目）”后点击“启动当前列表”，可一键启动整个集合的后代服务；其它筛选条件会同时缩小启动范围。
+- “批量归组”只修改分组，保留每个服务的标签、星标、图标和自动启动偏好。
+- 批量启动逐项执行，跳过已运行、状态切换中、缺少启动命令的服务，以及控制面板自身。一项失败会继续处理其它服务，结果显示每项的执行、跳过或失败情况。
+- 启动命令执行与服务就绪是不同阶段；最终运行情况以项目自己的状态命令为准。
+
+## 显式发现子项目
+
+在“设置”中添加入口目录。默认检查入口本身和直接子目录的 `control-panel.json`，深层项目通过外层配置的 `children` 明确声明，不根据 package.json 猜测可运行服务。
+
+例如一个研究工作区包含多个仓库，以及一个仓库的多个服务：
+
+```json
+{
+  "id": "research",
+  "name": "研究工作区",
+  "kind": "collection",
+  "notes": "一起使用的研究工具和服务",
+  "children": [
+    { "path": "repos/knowledge", "role": "knowledge", "notes": "知识库后端" },
+    { "path": "repos/reader/apps/web", "role": "frontend", "notes": "阅读前端" },
+    { "path": "repos/reader/services/indexer", "role": "worker", "notes": "后台索引" }
+  ]
+}
+```
+
+每个子目录仍须有自己的 `control-panel.json`，并可继续声明 `children`。路径相对外层配置所在目录解析，与其 `workingDirectory` 无关；必须是内部子目录。越界路径、符号链接越界、缺失配置和无效声明会显示在设置中。
+
+`kind: collection` 只有组织作用，不作为服务展示或计数，也不执行命令。有独立进程的父项目可省略 `kind` 或用 `kind: project`，并同时声明子项目；父项目命令只能控制自身进程，避免与独立子服务重复启动。旧单项目配置继续兼容。
+
+服务会显示所属链条和角色，并默认按所属集合分组；本机个人分组可另行设置。扫描上限为 1,000 个 manifest、32 层声明关系。声明顺序不表示启动依赖，当前不提供依赖调度或就绪等待。
+
+完整协议：[Project Tooling Spec](https://github.com/codepiano/control-panel-spec/blob/main/spec/PROJECT_TOOLING_SPEC.md)。`children` / `kind` 是本次协议 1.7 的扩展，需配合支持该扩展的消费端使用。
+
+## 单服务配置
 
 ```json
 {
   "id": "my-api",
   "name": "My API",
-  "icon": "assets/control-panel-icon.png",
   "workingDirectory": ".",
   "startCommand": "./scripts/start.sh",
   "stopCommand": "./scripts/stop.sh",
   "statusCommand": "./scripts/status.sh",
   "restartCommand": "./scripts/restart.sh",
-  "surfaceType": "web",
+  "surfaceType": "service",
   "runtimeMode": "development",
   "processMode": "managed",
   "frontendUrl": "http://127.0.0.1:3000",
-  "notes": "本地开发 API"
+  "notes": "本地 API"
 }
 ```
 
-刷新面板后，项目就会出现。
+项目自身维护生命周期命令和进程归属。状态命令 `0` 表示运行中，非 `0` 表示停止或未确认。禁止 `pkill node` / `pkill electron` 等宽泛停止命令。界面可直接编辑项目名称、访问地址/端口和备注，原子写回原 manifest，保留其它字段。
 
-## 项目配置约定
+## 配置与迁移
 
-`control-panel.json` 是项目的唯一配置来源。它和 `scripts/` 一起由项目维护：
+沿用桌面版原有目录 `~/Library/Application Support/control-panel` 中的 `projects.json`、`state.json` 和 `project-icons`，无需重新登记服务。已有启动次数、运行时长、本机图标和自动启动偏好继续保留。
 
-```text
-project-root/
-  control-panel.json
-  scripts/
-    start.sh
-    stop.sh
-    status.sh
-    restart.sh        # 可选
-```
+`projectPreferences` 保存本机 `group`、`tags`、`favorite`、`startOnPanelLaunch`、`iconOverride`；它们不写回项目仓库。选择“随面板启动”的服务会在后端启动时拉起。PNG 自定义图标可从浏览器上传。
 
-常用字段：
+可选环境变量：
 
-| 字段 | 用途 |
+| 变量 | 用途 |
 | --- | --- |
-| `name` | 面板中的项目名称 |
-| `id` | 稳定标识，建议填写 |
-| `icon` | 项目根目录内的相对图标路径，推荐 PNG、JPEG 或 WebP |
-| `workingDirectory` | 执行命令时使用的目录 |
-| `startCommand` / `stopCommand` / `statusCommand` / `restartCommand` | 项目生命周期命令 |
-| `surfaceType` | 项目主表面：`web`、`desktop`、`hybrid` 或 `service` |
-| `runtimeMode` | 运行方式：`development` 或 `packaged`，开发模式不要求打包 DMG |
-| `processMode` | 进程责任：`managed`、`external` 或 `observed` |
-| `frontendUrl` | Web 前端入口，适用于 `web` 或 `hybrid` 项目 |
-| `appUrl` | 桌面应用 URL、深链或其他应用入口 |
-| `appLaunchCommand` | 启动或聚焦桌面应用的命令 |
-| `openEntryCommand` | 打开、启动或聚焦项目主入口的命令 |
-| `homepageUrl` | 主入口不可用时的项目主页或仓库备用地址 |
-| `metricsUrl` | 项目自身提供的运行时 metrics JSON 接口 |
-| `notes` | 面板中的简短说明 |
+| `CONTROL_PANEL_PORT` | HTTP 端口，默认 `4310` |
+| `CONTROL_PANEL_CONFIG` | 自定义 `projects.json` 路径 |
+| `CONTROL_PANEL_DATA` | 自定义状态和图标目录 |
+| `CONTROL_PANEL_NODE` | 后台启动和登录启动使用的 Node 绝对路径 |
 
-`statusCommand` 返回码为 `0` 表示运行中或健康；`1` 表示停止、失败或降级；`2` 表示不支持或配置无效；`3` 表示无法确认外部启动的状态。
+macOS 登录启动可在设置中切换，或执行 `./scripts/install-login-item.sh` / `./scripts/uninstall-login-item.sh`。登录项只启动后端，不自动打开浏览器；移动源码目录或更换 Node 路径后应重新启用登录项。
 
-`managed` 表示项目脚本负责记录并管理自己的进程；`external` 表示交给 launchd、PM2、Docker 等外部 supervisor；`observed` 表示只观测、不提供可靠的启动和停止能力。禁止通过 `pkill node`、`pkill electron` 等宽泛命令猜测或终止进程。
+## 访问边界
 
-完整的字段、主入口、生命周期和进程归属规则请见 [Project Tooling Spec](https://github.com/codepiano/control-panel-spec/blob/main/spec/PROJECT_TOOLING_SPEC.md)。
+后端只监听 `127.0.0.1`，所有控制操作需要当前会话令牌，并校验 Host 与 Origin；它不提供跨域接口，也不接受界面传入的任意 shell 命令。HTTP 服务启动时会执行已信任项目的状态脚本与已授权的自动启动偏好。
 
-## 让 AI 接入已有项目
-
-`project-tooling` Skill 的存在，就是为了让项目接入这件事可交给 AI 完成，而不是为每个仓库手写一套互不兼容的启动脚本。
-
-把下面的信息一起交给 AI：
-
-1. 项目仓库或项目根目录
-2. [Project Tooling Skill](https://github.com/codepiano/control-panel-spec/blob/main/SKILL.md)
-3. [Project Tooling Spec](https://github.com/codepiano/control-panel-spec/blob/main/spec/PROJECT_TOOLING_SPEC.md)
-4. 已有的 `control-panel.json`（如果存在）、启动说明和项目特有约束
-
-可以直接这样描述任务：
-
-> 请使用 Project Tooling Skill，先阅读规范再检查这个项目。为它生成或修复 `control-panel.json` 以及项目实际需要的生命周期脚本。识别 `surfaceType`、`runtimeMode` 和 `processMode`；Electron 开发模式也必须使用项目专属 PID、进程组或外部 supervisor，不能依赖前台阻塞命令或宽泛进程扫描。保持项目原有的技术栈和命令，并在完成后给出可应用的 diff 和验证结果。
-
-规范要求 AI 优先复用项目已有命令和脚本，明确工作目录与进程归属，并让 `status` 用退出码表达状态。因此，生成结果可以被 Control Panel 自动发现和调用，也能在项目仓库中独立维护与审查。
-
-如果项目有自己的产品或技术规范，可在 manifest 中填写 `specUrl`；AI 应优先遵循该项目规范，再采用通用生命周期约定。
-
-## 图形化编辑
-
-自动发现的项目卡片提供“配置”按钮，可编辑：
-
-- 项目名称
-- 访问地址和端口（写入 `frontendUrl`）
-- 备注
-
-保存时会校验名称、HTTP/HTTPS URL、端口范围（`1`–`65535`）和文本格式，并原子写回该项目的 `control-panel.json`。
-
-启动/停止/状态命令、脚本路径、工作目录、进程模式等生命周期字段没有图形化编辑入口，避免控制面板产生不符合项目规范的配置。
-
-## Control Panel 自身配置
-
-首次启动时，应用会在 Electron 的 `userData` 目录创建 `projects.json`。这个文件只保存扫描根目录和 Control Panel 自身的使用偏好，不保存项目 manifest 字段的副本。
-
-“随面板启动”属于当前用户在这台 Mac 上的编排偏好，因此保存在 `projects.json` 的 `projectPreferences` 中，不写入项目自身的 `control-panel.json`，也不属于 Project Tooling Spec。面板进程每次启动时，只会拉起已开启该偏好且当前未运行的项目。
-
-项目可通过 manifest 的 `icon` 声明仓库内图标。Control Panel 优先显示用户在本机选择的覆盖图标，其次是 manifest 图标，最后按项目表面类型生成回退图标。本机覆盖图标会转换为 PNG 并保存在 Electron `userData/project-icons` 中，不会写回项目仓库。
-
-如需自定义它的位置：
-
-```bash
-CONTROL_PANEL_CONFIG=/path/to/projects.json npm start
-```
-
-示例结构见 [config/projects.example.json](./config/projects.example.json)。
-
-### 源码模式的登录时启动
-
-设置页的“登录时启动”会在 `~/Library/LaunchAgents` 安装当前源码目录专用的 LaunchAgent。登录后它会调用 `scripts/start.sh --hidden`，仅在菜单栏启动 Control Panel，不弹出主窗口。
-
-也可在终端中直接管理：
-
-```bash
-./scripts/install-login-item.sh
-./scripts/login-item-status.sh
-./scripts/uninstall-login-item.sh
-```
-
-如果移动了项目目录，需要在新目录重新启用一次登录项。
-
-## 开发
-
-```bash
-npm install
-npm run dev
-```
-
-这是一个本地 Electron 应用；目前面向 macOS 菜单栏体验设计。
+浏览器无法直接扫描本机目录，因此通过设置输入路径。打开项目目录、入口和配置文件由后端调用 macOS `open` 完成。没有菜单栏和托盘。关闭浏览器不会停止后端或其它服务。
 
 ## License
 
-本仓库暂未声明开源许可证。在复用、发布或贡献前，请先与维护者确认许可方式。
+本仓库暂未声明开源许可证。

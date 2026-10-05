@@ -1,41 +1,41 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
+const APP_ROOT = path.resolve(__dirname, '..');
+const USER_DATA = process.env.CONTROL_PANEL_DATA || path.join(os.homedir(), 'Library', 'Application Support', 'control-panel');
+const BACKEND_STARTED_AT = new Date(Date.now() - process.uptime() * 1000).toISOString();
+const actions = new Map();
+const registerAction = (name, handler) => actions.set(name, handler);
+
+function openSystemTarget(target) {
+  return new Promise((resolve, reject) => {
+    const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
+    execFile(command, [target], (error) => error ? reject(error) : resolve(''));
+  });
+}
 const { exec, execFile, spawn } = require('child_process');
 
-const APP_NAME = 'Control Panel';
 const CONFIG_ENV = 'CONTROL_PANEL_CONFIG';
-const DEFAULT_REFRESH_MS = 5000;
 const STATUS_COMMAND_TIMEOUT_MS = 8000;
 const DEFAULT_SCAN_DEPTH = 1;
+let scanReport = {};
 const DEFAULT_MANIFEST_NAME = 'control-panel.json';
 const PROJECT_ICON_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const MAX_PROJECT_ICON_BYTES = 5 * 1024 * 1024;
-const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo']);
-const APP_ICON_PATH = path.join(app.getAppPath(), 'assets', 'app-icon.png');
-const TRAY_ICON_PATH = path.join(app.getAppPath(), 'assets', 'tray-icon-template.svg');
+const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo', 'vendor', 'target', 'coverage', 'venv', '__pycache__']);
 const LOGIN_ITEM_SCRIPTS = {
-  install: path.join(app.getAppPath(), 'scripts', 'install-login-item.sh'),
-  uninstall: path.join(app.getAppPath(), 'scripts', 'uninstall-login-item.sh'),
-  status: path.join(app.getAppPath(), 'scripts', 'login-item-status.sh'),
+  install: path.join(APP_ROOT, 'scripts', 'install-login-item.sh'),
+  uninstall: path.join(APP_ROOT, 'scripts', 'uninstall-login-item.sh'),
+  status: path.join(APP_ROOT, 'scripts', 'login-item-status.sh'),
 };
-const SHOULD_START_HIDDEN = process.argv.includes('--hidden');
-const HAS_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
-
-if (!HAS_SINGLE_INSTANCE_LOCK) {
-  app.quit();
-}
-
-let tray = null;
-let windowRef = null;
-let refreshTimer = null;
 let projectsCache = [];
 let projectState = {};
-let trayMenuBuiltAt = 0;
 let refreshInFlight = null;
-let lastRefreshAt = null;
 let currentConfig = defaultConfig();
+const startingProjects = new Set();
+const stoppingProjects = new Set();
+let batchStartInFlight = false;
 
 function defaultConfig() {
   return {
@@ -54,15 +54,15 @@ function getConfigPath() {
     return path.resolve(process.env[CONFIG_ENV]);
   }
 
-  return path.join(app.getPath('userData'), 'projects.json');
+  return path.join(USER_DATA, 'projects.json');
 }
 
 function getStatePath() {
-  return path.join(app.getPath('userData'), 'state.json');
+  return path.join(USER_DATA, 'state.json');
 }
 
 function normalizeList(values) {
-  return [...new Set((values || []).map((value) => String(value).trim()).filter(Boolean))];
+  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value).trim()).filter(Boolean))];
 }
 
 function normalizeConfig(config) {
@@ -86,6 +86,12 @@ function normalizeConfig(config) {
       if (/^[a-f0-9]{64}\.png$/.test(iconOverride)) {
         normalizedPreference.iconOverride = iconOverride;
       }
+      if (preference.favorite === true) normalizedPreference.favorite = true;
+      const group = typeof preference.group === 'string' ? preference.group.trim().slice(0, 40) : '';
+      if (group) normalizedPreference.group = group;
+      const tags = normalizeList(Array.isArray(preference.tags) ? preference.tags.filter((tag) => typeof tag === 'string') : [])
+        .map((tag) => tag.slice(0, 30)).slice(0, 20);
+      if (tags.length) normalizedPreference.tags = normalizeList(tags);
       if (Object.keys(normalizedPreference).length > 0) {
         projectPreferences[projectKey] = normalizedPreference;
       }
@@ -95,7 +101,7 @@ function normalizeConfig(config) {
     roots: normalizeList(base.roots),
     scan: {
       manifestName: String(scan.manifestName || DEFAULT_MANIFEST_NAME).trim() || DEFAULT_MANIFEST_NAME,
-      maxDepth: Math.max(0, Number.isFinite(Number(scan.maxDepth)) ? Number(scan.maxDepth) : DEFAULT_SCAN_DEPTH),
+      maxDepth: Math.min(1, Math.max(0, Number.isFinite(Number(scan.maxDepth)) ? Math.floor(Number(scan.maxDepth)) : DEFAULT_SCAN_DEPTH)),
     },
     projects: Array.isArray(base.projects) ? base.projects : [],
     projectPreferences,
@@ -103,7 +109,7 @@ function normalizeConfig(config) {
 }
 
 function isPanelProject(project) {
-  return path.resolve(project.projectDir || project.workingDirectory) === path.resolve(app.getAppPath());
+  return path.resolve(project.projectDir || project.workingDirectory) === path.resolve(APP_ROOT);
 }
 
 function startsWithPanel(config, projectKey) {
@@ -111,7 +117,7 @@ function startsWithPanel(config, projectKey) {
 }
 
 function getProjectIconsDir() {
-  return path.join(app.getPath('userData'), 'project-icons');
+  return path.join(USER_DATA, 'project-icons');
 }
 
 function projectIconFilename(projectKey) {
@@ -141,33 +147,13 @@ function safeProjectIconPath(projectDir, iconValue) {
   }
 }
 
-function squareProjectIcon(image, size) {
-  const sourceSize = image.getSize();
-  const scale = Math.max(size / sourceSize.width, size / sourceSize.height);
-  const width = Math.max(size, Math.round(sourceSize.width * scale));
-  const height = Math.max(size, Math.round(sourceSize.height * scale));
-  const resized = image.resize({ width, height, quality: 'best' });
-  return resized.crop({
-    x: Math.floor((width - size) / 2),
-    y: Math.floor((height - size) / 2),
-    width: size,
-    height: size,
-  });
-}
-
 function iconDataUrlFromPath(iconPath) {
-  if (!iconPath) {
-    return '';
-  }
+  if (!iconPath) return '';
   try {
-    const image = nativeImage.createFromPath(iconPath);
-    if (image.isEmpty()) {
-      return '';
-    }
-    return squareProjectIcon(image, 64).toDataURL();
-  } catch (error) {
-    return '';
-  }
+    if (fs.statSync(iconPath).size > MAX_PROJECT_ICON_BYTES) return '';
+    const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }[path.extname(iconPath).toLowerCase()];
+    return mime ? `data:${mime};base64,${fs.readFileSync(iconPath).toString('base64')}` : '';
+  } catch { return ''; }
 }
 
 function resolveProjectIcon(project, config) {
@@ -259,12 +245,13 @@ function writeJson(filePath, value) {
 }
 
 function ensureUserFiles() {
-  const userDataDir = app.getPath('userData');
+  const userDataDir = USER_DATA;
   fs.mkdirSync(userDataDir, { recursive: true });
 
   const configPath = getConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
   if (!fs.existsSync(configPath)) {
-    const examplePath = path.join(app.getAppPath(), 'config', 'projects.example.json');
+    const examplePath = path.join(APP_ROOT, 'config', 'projects.example.json');
     if (fs.existsSync(examplePath)) {
       fs.copyFileSync(examplePath, configPath);
     } else {
@@ -352,23 +339,39 @@ function isPidAlive(pid) {
   }
 }
 
-function launchDetached(command, cwd) {
+function launchDetached(command, cwd, projectKey = '') {
   return new Promise((resolve, reject) => {
-    if (!command) {
-      reject(new Error('Missing start command'));
-      return;
-    }
-
-    const child = spawn('/bin/zsh', ['-lc', command], {
-      cwd,
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
+    if (!command) { reject(new Error('Missing start command')); return; }
+    const logsDir = path.join(USER_DATA, 'service-logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    const logPath = path.join(logsDir, `${crypto.createHash('sha256').update(projectKey || cwd).digest('hex')}.log`);
+    const descriptor = fs.openSync(logPath, 'a');
+    let timer;
+    let closed = false;
+    const closeDescriptor = () => { if (!closed) { fs.closeSync(descriptor); closed = true; } };
+    const child = spawn('/bin/zsh', ['-lc', command], { cwd, detached: true, stdio: ['ignore', descriptor, descriptor], env: process.env });
+    child.once('error', (error) => { closeDescriptor(); clearTimeout(timer); reject(error); });
+    child.once('spawn', () => {
+      closeDescriptor();
+      child.unref();
+      // A short-lived lifecycle wrapper can report failure; long-running commands remain detached.
+      timer = setTimeout(() => resolve(child.pid), 1500);
     });
-
-    child.once('error', reject);
-    child.unref();
-    resolve(child.pid);
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) { resolve(child.pid); return; }
+      let detail = '';
+      try {
+        const fd = fs.openSync(logPath, 'r');
+        try {
+          const size = fs.fstatSync(fd).size;
+          const buffer = Buffer.alloc(Math.min(size, 2000));
+          fs.readSync(fd, buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+          detail = buffer.toString('utf8').trim();
+        } finally { fs.closeSync(fd); }
+      } catch { /* Exit status still explains the failure. */ }
+      reject(new Error(`启动命令退出：${code ?? signal}${detail ? ` · ${detail}` : ''}`));
+    });
   });
 }
 
@@ -776,26 +779,63 @@ function findProjectManifests(root, manifestName, maxDepth) {
 function discoverProjects(config) {
   const discovered = [];
   const seenKeys = new Set();
-  const roots = normalizeList(config.roots);
-  const manifestName = config.scan.manifestName || DEFAULT_MANIFEST_NAME;
-  const maxDepth = Number.isFinite(Number(config.scan.maxDepth)) ? Number(config.scan.maxDepth) : DEFAULT_SCAN_DEPTH;
+  const seenLocations = new Set();
 
-  for (const root of roots) {
-    for (const manifestPath of findProjectManifests(root, manifestName, maxDepth)) {
-      const manifest = parseManifest(manifestPath);
-      if (!manifest) {
-        continue;
-      }
-
-      const project = buildProjectFromManifest(manifestPath, manifest, root, 'auto');
-      if (seenKeys.has(project.key)) {
-        continue;
-      }
-
-      seenKeys.add(project.key);
-      discovered.push(project);
+  const issues = [];
+  const collections = [];
+  const active = new Set();
+  const visit = (manifestPath, root, ancestors = [], relationship = null, boundary = null) => {
+    let canonical;
+    try { canonical = fs.realpathSync(manifestPath); }
+    catch (error) { issues.push({ path: manifestPath, detail: `子项目配置不可读取：${error.code}` }); return; }
+    if (boundary && !canonical.startsWith(`${boundary}${path.sep}`)) { issues.push({ path: manifestPath, detail: '子项目配置文件通过符号链接越界' }); return; }
+    if (active.has(canonical)) { issues.push({ path: manifestPath, detail: '子项目声明形成循环' }); return; }
+    const key = `manifest:${manifestPath}`;
+    if (seenKeys.has(key) || seenLocations.has(canonical)) return;
+    if (seenKeys.size >= 1000 || ancestors.length >= 32) { issues.push({ path: manifestPath, detail: '子项目数量或层级超过限制' }); return; }
+    const manifest = parseManifest(manifestPath);
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) { issues.push({ path: manifestPath, detail: '配置不是有效 JSON 对象' }); return; }
+    if (manifest.kind && !['project', 'collection'].includes(manifest.kind)) { issues.push({ path: manifestPath, detail: '不支持的 kind' }); return; }
+    if (manifest.kind === 'collection' && ['start', 'stop', 'status', 'restart', 'init', 'install', 'uninstall', 'openEntry', 'openHomepage'].some((name) => manifest[name] || manifest[`${name}Command`] || manifest.scripts?.[name])) {
+      issues.push({ path: manifestPath, detail: '集合不能声明生命周期命令，请将可控服务设为 project' }); return;
     }
-  }
+    seenKeys.add(key);
+    seenLocations.add(canonical);
+    active.add(canonical);
+    const name = String(manifest.name || path.basename(path.dirname(manifestPath)));
+    if (manifest.kind === 'collection' && (typeof manifest.name !== 'string' || !manifest.name.trim())) {
+      issues.push({ path: manifestPath, detail: '集合必须声明 name' }); active.delete(canonical); return;
+    }
+    if (manifest.kind === 'collection') {
+      collections.push({ key, name, manifestPath, notes: String(manifest.notes || ''), ancestors });
+    } else {
+      const project = buildProjectFromManifest(manifestPath, manifest, root, 'auto');
+      discovered.push({ ...project, ancestors, relationship });
+    }
+    if (manifest.children !== undefined && !Array.isArray(manifest.children)) {
+      issues.push({ path: manifestPath, detail: 'children 必须是数组' });
+    }
+    const parentDir = path.dirname(manifestPath);
+    const canonicalParent = path.dirname(canonical);
+    for (const child of Array.isArray(manifest.children) ? manifest.children : []) {
+      if (!child || typeof child !== 'object' || typeof child.path !== 'string' || !child.path.trim() || path.isAbsolute(child.path)) {
+        issues.push({ path: manifestPath, detail: '子项目必须声明相对目录 path' }); continue;
+      }
+      const childDir = path.resolve(parentDir, child.path);
+      let canonicalChild;
+      try { canonicalChild = fs.realpathSync(childDir); }
+      catch { issues.push({ path: childDir, detail: '声明的子项目目录不存在' }); continue; }
+      if (!childDir.startsWith(`${parentDir}${path.sep}`) || !canonicalChild.startsWith(`${canonicalParent}${path.sep}`)) {
+        issues.push({ path: childDir, detail: '子项目必须位于父项目目录内，不能通过路径或符号链接越界' }); continue;
+      }
+      visit(path.join(childDir, config.scan.manifestName), root, [...ancestors, { key, name }], { role: String(child.role || ''), notes: String(child.notes || '') }, canonicalParent);
+    }
+    active.delete(canonical);
+  };
+  const seeds = normalizeList(config.roots).flatMap((root) => findProjectManifests(root, config.scan.manifestName, config.scan.maxDepth).map((manifestPath) => ({ manifestPath, root })));
+  seeds.sort((a, b) => a.manifestPath.length - b.manifestPath.length);
+  for (const { manifestPath, root } of seeds) visit(manifestPath, root);
+  scanReport = { issues, collections };
 
   const legacyProjects = Array.isArray(config.projects) ? config.projects : [];
   for (const entry of legacyProjects) {
@@ -831,13 +871,15 @@ function discoverProjects(config) {
 
 async function getProjectStatus(project) {
   const state = projectState[project.key] || {};
+  if (isPanelProject(project)) return { status: 'running', pid: process.pid, details: '本机 Web 后端运行中' };
+  if (startingProjects.has(project.key) || stoppingProjects.has(project.key)) return { status: state.status, pid: state.pid || null, details: state.lastOutput || '' };
 
   if (project.statusCommand) {
     const result = await execCommand(project.statusCommand, project.workingDirectory);
     return {
-      status: result.code === 0 ? 'running' : 'stopped',
+      status: result.code === 0 ? 'running' : state.status === 'error' ? 'error' : 'stopped',
       pid: state.pid || null,
-      details: result.stdout.trim() || result.stderr.trim() || '',
+      details: result.stdout.trim() || result.stderr.trim() || (state.status === 'error' ? state.lastOutput || '' : ''),
     };
   }
 
@@ -851,6 +893,7 @@ async function getProjectStatus(project) {
 
   return {
     status: 'stopped',
+    status: state.status === 'error' ? 'error' : 'stopped',
     pid: state.pid || null,
     details: state.lastOutput || '',
   };
@@ -867,10 +910,16 @@ async function collectProjectsSnapshot() {
       return {
         ...project,
         ...icon,
+        group: config.projectPreferences[project.key]?.group || (project.ancestors || []).map((item) => item.name).join(' / '),
+        localGroup: config.projectPreferences[project.key]?.group || '',
+        tags: config.projectPreferences[project.key]?.tags || [],
+        favorite: config.projectPreferences[project.key]?.favorite === true,
+        canBatchStart: Boolean(project.startCommand) && !isPanelProject(project),
         startOnPanelLaunch: startsWithPanel(config, project.key),
         canStartOnPanelLaunch: Boolean(project.startCommand) && !isPanelProject(project),
         usageCount: Number(state.usageCount || 0),
-        lastStartedAt: String(state.lastStartedAt || ''),
+        lastStartedAt: isPanelProject(project) ? BACKEND_STARTED_AT : String(state.lastStartedAt || ''),
+        isPanel: isPanelProject(project),
         ...status,
       };
     })
@@ -881,166 +930,6 @@ async function collectProjectsSnapshot() {
     config,
     projects: snapshot,
   };
-}
-
-function loadIcon(iconPath, fallbackSvg) {
-  const image = nativeImage.createFromPath(iconPath);
-  if (!image.isEmpty()) {
-    return image;
-  }
-
-  const svg = Buffer.from(fallbackSvg).toString('base64');
-  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${svg}`);
-}
-
-function appIconImage() {
-  return loadIcon(
-    APP_ICON_PATH,
-    `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-      <rect x="64" y="64" width="896" height="896" rx="224" fill="#0d1730"/>
-      <rect x="200" y="212" width="624" height="600" rx="112" fill="#13233f"/>
-      <rect x="272" y="320" width="360" height="54" rx="27" fill="#35d5a7"/>
-      <rect x="272" y="450" width="360" height="54" rx="27" fill="#35d5a7"/>
-      <rect x="272" y="580" width="240" height="54" rx="27" fill="#35d5a7"/>
-      <circle cx="688" cy="605" r="96" fill="#ffb35c"/>
-    </svg>`
-  );
-}
-
-function trayIconImage() {
-  return loadIcon(
-    TRAY_ICON_PATH,
-    `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
-      <g fill="#000000">
-        <rect x="3" y="4.8" width="12" height="2.2" rx="1.1"/>
-        <rect x="3" y="9.9" width="12" height="2.2" rx="1.1"/>
-        <rect x="3" y="15" width="8" height="2.2" rx="1.1"/>
-        <circle cx="17.5" cy="16.1" r="2.2"/>
-      </g>
-    </svg>`
-  );
-}
-
-function buildTrayMenu(projects) {
-  const statusOrder = { running: 0, starting: 1, error: 2, stopping: 3, stopped: 4 };
-  const statusBadge = {
-    running: '●',
-    starting: '◐',
-    stopping: '◑',
-    error: '!',
-    stopped: '○',
-  };
-  const orderedProjects = [...projects].sort((a, b) => {
-    const statusGap = (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99);
-    if (statusGap !== 0) {
-      return statusGap;
-    }
-
-    return a.name.localeCompare(b.name, 'zh-Hans-CN');
-  });
-  const runningCount = orderedProjects.filter((project) => project.status === 'running').length;
-  const projectItems = orderedProjects.map((project) => ({
-    label: `${statusBadge[project.status] || '○'} ${project.name}`,
-    submenu: [
-      { label: `状态: ${project.status || 'stopped'}`, enabled: false },
-      ...(project.notes ? [{ label: project.notes, enabled: false }] : []),
-      { type: 'separator' },
-      {
-        label: '启动',
-        enabled: !(project.status === 'running' || project.status === 'starting'),
-        click: () => startProject(project.key),
-      },
-      {
-        label: '停止',
-        enabled: !(project.status === 'stopped' || project.status === 'stopping'),
-        click: () => stopProject(project.key),
-      },
-      {
-        label: '重启',
-        enabled: !(project.status === 'starting' || project.status === 'stopping'),
-        click: () => restartProject(project.key),
-      },
-      { type: 'separator' },
-      {
-        label: '打开入口',
-        enabled: Boolean(project.homepageUrl || project.openHomepageCommand || project.projectDir),
-        click: () => openProjectHomepage(project.key),
-      },
-      {
-        label: '打开仓库',
-        enabled: Boolean(project.repositoryUrl || project.projectDir),
-        click: () => openProjectRepository(project.key),
-      },
-      {
-        label: '打开目录',
-        enabled: Boolean(project.projectDir || project.workingDirectory),
-        click: () => shell.openPath(project.projectDir || project.workingDirectory),
-      },
-    ],
-  }));
-
-  return Menu.buildFromTemplate([
-    { label: `${APP_NAME}  ${runningCount}/${orderedProjects.length}`, enabled: false },
-    { type: 'separator' },
-    {
-      label: '打开面板',
-      click: showWindow,
-    },
-    {
-      label: '刷新状态',
-      click: () => refreshAll().catch(() => {}),
-    },
-    {
-      label: '只看运行中',
-      enabled: runningCount > 0,
-      submenu:
-        runningCount > 0
-          ? orderedProjects
-              .filter((project) => project.status === 'running')
-              .map((project) => ({
-                label: project.name,
-                click: () => showWindow(),
-              }))
-          : [{ label: '当前没有运行中的项目', enabled: false }],
-    },
-    ...(projectItems.length
-      ? [
-          { type: 'separator' },
-          {
-            label: `项目 (${projectItems.length})`,
-            submenu: projectItems,
-          },
-        ]
-      : []),
-    { type: 'separator' },
-    {
-      label: '打开配置文件',
-      click: () => shell.openPath(getConfigPath()),
-    },
-    {
-      label: '打开配置目录',
-      click: () => shell.openPath(path.dirname(getConfigPath())),
-    },
-    {
-      label: '添加项目根目录',
-      click: async () => {
-        const selected = await pickProjectRoots();
-        if (selected.length > 0) {
-          const config = loadConfig();
-          saveConfig({
-            ...config,
-            roots: normalizeList([...config.roots, ...selected]),
-          });
-          await refreshAll();
-        }
-      },
-    },
-    { type: 'separator' },
-    {
-      label: '退出',
-      click: () => app.quit(),
-    },
-  ]);
 }
 
 async function refreshAll() {
@@ -1054,27 +943,16 @@ async function refreshAll() {
     const payload = {
       config,
       projects,
+      scanReport,
+      backendStartedAt: BACKEND_STARTED_AT,
+      backendPid: process.pid,
       configPath: getConfigPath(),
       statePath: getStatePath(),
       updatedAt: new Date().toISOString(),
-      trayUpdatedAt: trayMenuBuiltAt,
       openAtLogin: loginItem.enabled,
       loginItemStatus: loginItem,
     };
 
-    if (windowRef && !windowRef.isDestroyed()) {
-      windowRef.webContents.send('projects-updated', payload);
-    }
-
-    if (tray) {
-      tray.setContextMenu(buildTrayMenu(projects));
-      tray.setToolTip(
-        `${APP_NAME} - ${projects.filter((project) => project.status === 'running').length}/${projects.length} running`
-      );
-      trayMenuBuiltAt = Date.now();
-    }
-
-    lastRefreshAt = payload.updatedAt;
     return payload;
   })();
 
@@ -1085,63 +963,24 @@ async function refreshAll() {
   }
 }
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 1100,
-    height: 780,
-    minWidth: 920,
-    minHeight: 640,
-    show: false,
-    title: APP_NAME,
-    backgroundColor: '#0b1220',
-    titleBarStyle: 'hiddenInset',
-    icon: appIconImage(),
-    webPreferences: {
-      preload: path.join(app.getAppPath(), 'src', 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-
-  win.loadFile(path.join(app.getAppPath(), 'src', 'index.html'));
-
-  win.webContents.once('did-finish-load', () => {
-    win.webContents.send('app-ready', {
-      configPath: getConfigPath(),
-      projectCount: projectsCache.length,
-      config: currentConfig,
-    });
-  });
-
-  win.on('closed', () => {
-    if (windowRef === win) {
-      windowRef = null;
-    }
-  });
-
-  return win;
-}
-
-function showWindow() {
-  if (!windowRef || windowRef.isDestroyed()) {
-    windowRef = createWindow();
-  }
-
-  windowRef.show();
-  windowRef.focus();
-  refreshAll().catch(() => {});
-}
-
 function findProjectByKey(projectKey) {
   return projectsCache.find((item) => item.key === projectKey);
 }
 
 async function startProject(projectKey) {
-  const project = findProjectByKey(projectKey);
-  if (!project) {
-    return;
+  if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey)) return { outcome: 'skipped', detail: '正在切换状态' };
+  startingProjects.add(projectKey);
+  try {
+    return await performProjectStart(projectKey);
+  } finally {
+    startingProjects.delete(projectKey);
   }
+}
+
+async function performProjectStart(projectKey) {
+  const project = findProjectByKey(projectKey);
+  if (!project) throw new Error('项目不存在，请刷新后重试');
+  if (isPanelProject(project)) throw new Error('后端自身请通过 scripts/start.sh 管理');
 
   projectState[project.key] = {
     ...(projectState[project.key] || {}),
@@ -1152,7 +991,7 @@ async function startProject(projectKey) {
   await refreshAll();
 
   try {
-    const pid = await launchDetached(project.startCommand, project.workingDirectory);
+    const pid = await launchDetached(project.startCommand, project.workingDirectory, project.key);
     const usageCount = getUsageCount(project.key) + 1;
     const lastStartedAt = new Date().toISOString();
     projectState[project.key] = {
@@ -1172,11 +1011,21 @@ async function startProject(projectKey) {
     persistState();
   }
 
+  const failure = projectState[project.key]?.status === 'error' ? projectState[project.key].lastOutput : '';
   await refreshAll();
+  return failure ? { outcome: 'failed', detail: failure } : { outcome: 'started', detail: '已执行启动，请查看运行状态' };
 }
 
 async function stopProject(projectKey) {
+  if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey)) throw new Error('服务正在切换状态，请稍后重试');
+  stoppingProjects.add(projectKey);
+  try { return await performProjectStop(projectKey); }
+  finally { stoppingProjects.delete(projectKey); }
+}
+
+async function performProjectStop(projectKey) {
   const project = findProjectByKey(projectKey);
+  if (project && isPanelProject(project)) throw new Error('后端自身请通过 scripts/stop.sh 管理');
   if (!project) {
     return;
   }
@@ -1258,13 +1107,13 @@ async function openProjectHomepage(projectKey) {
   }
 
   if (project.frontendUrl) {
-    await shell.openExternal(project.frontendUrl);
+    await openSystemTarget(project.frontendUrl);
     return;
   }
 
   const inferredFrontendUrl = inferFrontendUrl(project.projectDir);
   if (inferredFrontendUrl) {
-    await shell.openExternal(inferredFrontendUrl);
+    await openSystemTarget(inferredFrontendUrl);
     return;
   }
 
@@ -1274,29 +1123,23 @@ async function openProjectHomepage(projectKey) {
   }
 
   if (project.homepageUrl) {
-    await shell.openExternal(project.homepageUrl);
+    await openSystemTarget(project.homepageUrl);
     return;
   }
 
   const packageHomepage = resolveHomepageFromPackage(project.projectDir);
   if (packageHomepage) {
-    await shell.openExternal(packageHomepage);
+    await openSystemTarget(packageHomepage);
     return;
   }
 
   const gitHomepage = await resolveHomepageFromGit(project.projectDir);
   if (gitHomepage) {
-    await shell.openExternal(gitHomepage);
+    await openSystemTarget(gitHomepage);
     return;
   }
 
-  await dialog.showMessageBox({
-    type: 'info',
-    buttons: ['OK'],
-    title: APP_NAME,
-    message: '无法确定项目入口',
-    detail: '请在 control-panel.json 中配置 frontendUrl、appUrl、openEntryCommand 或兼容字段 homepageUrl/openHomepageCommand。',
-  });
+  throw new Error('无法确定项目入口，请配置 frontendUrl、appUrl 或 openEntryCommand。');
 }
 
 async function openProjectRepository(projectKey) {
@@ -1306,29 +1149,23 @@ async function openProjectRepository(projectKey) {
   }
 
   if (project.repositoryUrl) {
-    await shell.openExternal(project.repositoryUrl);
+    await openSystemTarget(project.repositoryUrl);
     return;
   }
 
   const packageRepository = resolveRepositoryFromPackage(project.projectDir);
   if (packageRepository) {
-    await shell.openExternal(packageRepository);
+    await openSystemTarget(packageRepository);
     return;
   }
 
   const gitRepository = await resolveHomepageFromGit(project.projectDir);
   if (gitRepository) {
-    await shell.openExternal(gitRepository);
+    await openSystemTarget(gitRepository);
     return;
   }
 
-  await dialog.showMessageBox({
-    type: 'info',
-    buttons: ['OK'],
-    title: APP_NAME,
-    message: '无法确定项目仓库',
-    detail: '请在 control-panel.json 中配置 repositoryUrl，或者在 package.json / git remote 中提供可推断的仓库地址。',
-  });
+  throw new Error('无法确定项目仓库，请配置 repositoryUrl 或 git remote。');
 }
 
 function runLoginItemScript(scriptPath) {
@@ -1337,7 +1174,7 @@ function runLoginItemScript(scriptPath) {
       '/bin/bash',
       [scriptPath],
       {
-        cwd: app.getAppPath(),
+        cwd: APP_ROOT,
         env: process.env,
         timeout: STATUS_COMMAND_TIMEOUT_MS,
       },
@@ -1416,48 +1253,23 @@ async function setProjectStartOnPanelLaunch(projectKey, enable) {
   return true;
 }
 
-async function chooseProjectIcon(projectKey) {
+async function chooseProjectIcon(projectKey, dataUrl) {
   const project = findProjectByKey(projectKey);
-  if (!project) {
-    throw new Error('项目不存在，请刷新后重试。');
+  if (!project) throw new Error('项目不存在，请刷新后重试。');
+  const match = typeof dataUrl === 'string' && dataUrl.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('请上传 PNG 图标');
+  const buffer = Buffer.from(match[1], 'base64');
+  if (buffer.length > MAX_PROJECT_ICON_BYTES || buffer.length < 24 || !buffer.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) {
+    throw new Error('图标必须是有效 PNG，且不超过 5 MB');
   }
-  const result = await dialog.showOpenDialog({
-    title: `为 ${project.name} 选择图标`,
-    properties: ['openFile'],
-    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-  });
-  if (result.canceled || !result.filePaths[0]) {
-    return false;
-  }
-
-  const sourcePath = result.filePaths[0];
-  const stat = fs.statSync(sourcePath);
-  if (!stat.isFile() || stat.size > MAX_PROJECT_ICON_BYTES) {
-    throw new Error('图标文件不能超过 5 MB。');
-  }
-  const image = nativeImage.createFromPath(sourcePath);
-  if (image.isEmpty()) {
-    throw new Error('无法读取这张图片，请选择 PNG、JPEG 或 WebP。');
-  }
-
   const iconFilename = projectIconFilename(project.key);
   fs.mkdirSync(getProjectIconsDir(), { recursive: true });
   const targetPath = path.join(getProjectIconsDir(), iconFilename);
-  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tempPath, squareProjectIcon(image, 128).toPNG());
+  const tempPath = `${targetPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, buffer);
   fs.renameSync(tempPath, targetPath);
-
   const config = loadConfig();
-  saveConfig({
-    ...config,
-    projectPreferences: {
-      ...config.projectPreferences,
-      [project.key]: {
-        ...(config.projectPreferences[project.key] || {}),
-        iconOverride: iconFilename,
-      },
-    },
-  });
+  saveConfig({ ...config, projectPreferences: { ...config.projectPreferences, [project.key]: { ...(config.projectPreferences[project.key] || {}), iconOverride: iconFilename } } });
   await refreshAll();
   return true;
 }
@@ -1491,6 +1303,84 @@ async function resetProjectIcon(projectKey) {
   return true;
 }
 
+function validateOrganization(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('标记配置无效');
+  const result = {};
+  if (Object.hasOwn(input, 'group')) {
+    if (typeof input.group !== 'string' || input.group.trim().length > 40) throw new Error('分组名称不能超过 40 个字符');
+    result.group = input.group.trim();
+  }
+  if (Object.hasOwn(input, 'tags')) {
+    if (!Array.isArray(input.tags) || input.tags.some((tag) => typeof tag !== 'string' || tag.trim().length > 30)) {
+      throw new Error('每个标签不能超过 30 个字符');
+    }
+    result.tags = normalizeList(input.tags);
+    if (result.tags.length > 20) throw new Error('最多添加 20 个标签');
+  }
+  if (Object.hasOwn(input, 'favorite')) {
+    if (typeof input.favorite !== 'boolean') throw new Error('星标设置无效');
+    result.favorite = input.favorite;
+  }
+  return result;
+}
+
+function validateProjectKeys(keys) {
+  if (!Array.isArray(keys) || !keys.length || keys.some((key) => typeof key !== 'string')) {
+    throw new Error('请选择服务');
+  }
+  const uniqueKeys = [...new Set(keys)];
+  if (uniqueKeys.some((key) => !findProjectByKey(key))) throw new Error('部分服务已不存在，请刷新后重试');
+  return uniqueKeys;
+}
+
+async function saveProjectOrganization(keys, input) {
+  const projectKeys = validateProjectKeys(keys);
+  const organization = validateOrganization(input);
+  const config = loadConfig();
+  const projectPreferences = { ...config.projectPreferences };
+  for (const key of projectKeys) {
+    projectPreferences[key] = { ...(projectPreferences[key] || {}), ...organization };
+  }
+  saveConfig({ ...config, projectPreferences });
+  await refreshAll();
+  return true;
+}
+
+async function startProjects(keys) {
+  const projectKeys = validateProjectKeys(keys);
+  if (batchStartInFlight) throw new Error('已有一批服务正在启动，请等待完成');
+  batchStartInFlight = true;
+  const results = [];
+  try {
+    for (const key of projectKeys) {
+      const project = findProjectByKey(key);
+      const result = { key, name: project?.name || key };
+      try {
+        if (!project) throw new Error('服务已不存在');
+        if (!project.startCommand || isPanelProject(project)) {
+          results.push({ ...result, outcome: 'skipped', detail: '不支持批量启动' });
+          continue;
+        }
+        if (startingProjects.has(key) || stoppingProjects.has(key)) {
+          results.push({ ...result, outcome: 'skipped', detail: '服务正在切换状态' });
+          continue;
+        }
+        const status = await getProjectStatus(project);
+        if (status.status === 'running') {
+          results.push({ ...result, outcome: 'skipped', detail: '已经运行' });
+          continue;
+        }
+        results.push({ ...result, ...await startProject(key) });
+      } catch (error) {
+        results.push({ ...result, outcome: 'failed', detail: String(error.message || error) });
+      }
+    }
+    return results;
+  } finally {
+    batchStartInFlight = false;
+  }
+}
+
 async function startConfiguredProjects() {
   const configuredProjects = projectsCache.filter((project) => (
     project.startOnPanelLaunch && project.canStartOnPanelLaunch && project.status !== 'running'
@@ -1501,66 +1391,56 @@ async function startConfiguredProjects() {
   }
 }
 
-async function pickProjectRoots() {
-  const result = await dialog.showOpenDialog({
-    title: '选择项目根目录',
-    properties: ['openDirectory', 'multiSelections', 'createDirectory'],
-  });
-
-  if (result.canceled) {
-    return [];
-  }
-
-  return normalizeList(result.filePaths);
-}
-
-function registerIpc() {
-  ipcMain.handle('get-dashboard-data', async () => {
+function registerActions() {
+  registerAction('get-dashboard-data', async () => {
     const payload = await refreshAll();
     return payload;
   });
 
-  ipcMain.handle('refresh-projects', async () => {
+  registerAction('refresh-projects', async () => {
     await refreshAll();
     return true;
   });
 
-  ipcMain.handle('start-project', async (_event, projectKey) => {
+  registerAction('save-project-organization', (keys, input) => saveProjectOrganization(keys, input));
+  registerAction('start-projects', (keys) => startProjects(keys));
+
+  registerAction('start-project', async (projectKey) => {
     await startProject(projectKey);
     return true;
   });
 
-  ipcMain.handle('stop-project', async (_event, projectKey) => {
+  registerAction('stop-project', async (projectKey) => {
     await stopProject(projectKey);
     return true;
   });
 
-  ipcMain.handle('restart-project', async (_event, projectKey) => {
+  registerAction('restart-project', async (projectKey) => {
     await restartProject(projectKey);
     return true;
   });
 
-  ipcMain.handle('open-project-homepage', async (_event, projectKey) => {
+  registerAction('open-project-homepage', async (projectKey) => {
     await openProjectHomepage(projectKey);
     return true;
   });
 
-  ipcMain.handle('open-project-repository', async (_event, projectKey) => {
+  registerAction('open-project-repository', async (projectKey) => {
     await openProjectRepository(projectKey);
     return true;
   });
 
-  ipcMain.handle('open-config-folder', async () => {
-    await shell.openPath(path.dirname(getConfigPath()));
+  registerAction('open-config-folder', async () => {
+    await openSystemTarget(path.dirname(getConfigPath()));
     return true;
   });
 
-  ipcMain.handle('open-config-file', async () => {
-    await shell.openPath(getConfigPath());
+  registerAction('open-config-file', async () => {
+    await openSystemTarget(getConfigPath());
     return true;
   });
 
-  ipcMain.handle('open-project-folder', async (_event, folderPath) => {
+  registerAction('open-project-folder', async (folderPath) => {
     const inputPath = String(folderPath || '').trim();
     if (!inputPath) {
       throw new Error('项目目录未配置。');
@@ -1569,15 +1449,19 @@ function registerIpc() {
     if (!fs.existsSync(resolvedPath)) {
       throw new Error('项目目录不存在。');
     }
-    await shell.openPath(resolvedPath);
+    await openSystemTarget(resolvedPath);
     return true;
   });
 
-  ipcMain.handle('choose-project-roots', async () => {
-    return pickProjectRoots();
+  registerAction('set-scan-depth', async (depth) => {
+    if (!Number.isInteger(depth) || depth < 0 || depth > 1) throw new Error('入口扫描范围应为 0 或 1');
+    const config = loadConfig();
+    saveConfig({ ...config, scan: { ...config.scan, maxDepth: depth } });
+    await refreshAll();
+    return true;
   });
 
-  ipcMain.handle('set-project-roots', async (_event, roots) => {
+  registerAction('set-project-roots', async (roots) => {
     const config = loadConfig();
     saveConfig({
       ...config,
@@ -1587,7 +1471,7 @@ function registerIpc() {
     return currentConfig;
   });
 
-  ipcMain.handle('save-project-presentation', async (_event, projectKey, input) => {
+  registerAction('save-project-presentation', async (projectKey, input) => {
     const project = findProjectByKey(String(projectKey || ''));
     if (!project || !project.manifestPath) {
       throw new Error('项目不存在，请刷新后重试');
@@ -1608,76 +1492,38 @@ function registerIpc() {
     return true;
   });
 
-  ipcMain.handle('set-open-at-login', async (_event, enable) => {
+  registerAction('set-open-at-login', async (enable) => {
     return toggleAutoLaunch(Boolean(enable));
   });
 
-  ipcMain.handle('set-project-start-on-panel-launch', async (_event, projectKey, enable) => {
+  registerAction('set-project-start-on-panel-launch', async (projectKey, enable) => {
     return setProjectStartOnPanelLaunch(String(projectKey || ''), Boolean(enable));
   });
 
-  ipcMain.handle('choose-project-icon', async (_event, projectKey) => {
-    return chooseProjectIcon(String(projectKey || ''));
+  registerAction('choose-project-icon', async (projectKey, dataUrl) => {
+    return chooseProjectIcon(String(projectKey || ''), dataUrl);
   });
 
-  ipcMain.handle('reset-project-icon', async (_event, projectKey) => {
+  registerAction('reset-project-icon', async (projectKey) => {
     return resetProjectIcon(String(projectKey || ''));
   });
 }
 
-app.on('second-instance', () => {
-  showWindow();
-});
-
-if (HAS_SINGLE_INSTANCE_LOCK) {
-  app.whenReady().then(async () => {
-    ensureUserFiles();
-    loadConfig();
-    loadState();
-    registerIpc();
-
-    if (process.platform === 'darwin' && app.dock) {
-      app.dock.setIcon(appIconImage());
-      if (SHOULD_START_HIDDEN) {
-        app.dock.hide();
-      }
-    }
-
-    windowRef = createWindow();
-
-    const trayImage = trayIconImage().resize({ width: 18, height: 18 });
-    trayImage.setTemplateImage(true);
-    tray = new Tray(trayImage);
-    if (process.platform === 'darwin') {
-      tray.setTitle('CP');
-    }
-    tray.setToolTip(APP_NAME);
-    tray.on('click', () => {
-      if (windowRef && windowRef.isVisible()) {
-        windowRef.hide();
-      } else {
-        showWindow();
-      }
-    });
-
-    await refreshAll();
-    await startConfiguredProjects();
-    if (!SHOULD_START_HIDDEN && windowRef && !windowRef.isVisible()) {
-      windowRef.show();
-      windowRef.focus();
-    }
-    refreshTimer = setInterval(() => {
-      refreshAll().catch(() => {});
-    }, DEFAULT_REFRESH_MS);
-  });
+async function initialize({ autoStart = true } = {}) {
+  ensureUserFiles();
+  loadConfig();
+  loadState();
+  registerActions();
+  await refreshAll();
+  if (autoStart) await startConfiguredProjects();
 }
 
-app.on('window-all-closed', (event) => {
-  event.preventDefault();
-});
-
-app.on('before-quit', () => {
-  if (refreshTimer) {
-    clearInterval(refreshTimer);
-  }
-});
+module.exports = {
+  initialize,
+  invoke: async (action, args = []) => {
+    const handler = actions.get(action);
+    if (!handler) throw new Error('未知操作');
+    return handler(...args);
+  },
+  normalizeConfig, validateOrganization, discoverProjects, getConfigPath,
+};

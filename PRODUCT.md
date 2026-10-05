@@ -12,7 +12,7 @@ Primary user: a macOS developer maintaining several local development projects w
 
 ## Product Purpose
 
-Control Panel is a local macOS menu-bar control center for discovering development projects, checking their service state, and starting, stopping, restarting, or opening them from one place. It reduces the mental overhead of managing scattered local services while leaving every project in control of its own code and lifecycle commands.
+Control Panel is a local local web control center for discovering development projects, checking their service state, and starting, stopping, restarting, or opening them from one place. It reduces the mental overhead of managing scattered local services while leaving every project in control of its own code and lifecycle commands.
 
 ## Positioning
 
@@ -20,7 +20,7 @@ Rather than becoming another process manager or repository host, Control Panel d
 
 ## Operating Context
 
-Used locally on macOS while developing and maintaining multiple web apps, desktop apps, and local services. Users add scan roots; the application checks each root and its direct children for `control-panel.json`, then invokes the declared lifecycle commands from the declared working directory.
+Used locally on macOS while developing and maintaining multiple web apps, desktop apps, and local services. Users add discovery roots. The Node.js backend reads outer control-panel.json manifests and their declared children, preserves ownership relationships, and invokes each service's own lifecycle commands. The browser provides personal tags, groups, favorites, and batch launch.
 
 ## Capabilities and Constraints
 
@@ -30,7 +30,7 @@ Used locally on macOS while developing and maintaining multiple web apps, deskto
 - Uses `control-panel.json` plus project scripts or an external supervisor as the integration contract.
 - Supports web projects, desktop applications, hybrid projects, and services, including Electron development mode.
 - Distinguishes `managed`, `external`, and `observed` process modes instead of assuming every project is directly managed.
-- Runs locally and targets macOS only.
+- Runs as a local Node.js HTTP service with a browser interface; macOS integration remains in backend lifecycle scripts.
 - Does not take ownership of project repositories or upload project data.
 - Must remain quick to use and customizable.
 
@@ -41,8 +41,8 @@ Name: Control Panel. Voice and behavior should be practical, clear, and low-fric
 ## Evidence on Hand
 
 - Product overview and integration contract: `README.md`.
-- Electron implementation: `src/`.
-- Existing tray and application icons: `assets/`.
+- Browser frontend and Node.js backend: `src/`.
+- Brand icon: `assets/`.
 - Example state configuration: `config/projects.example.json`.
 
 ## Product Principles

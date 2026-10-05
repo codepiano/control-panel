@@ -24,10 +24,15 @@ plutil -insert ProcessType -string "Interactive" "$TEMP_FILE"
 plutil -insert StandardOutPath -string "$LOG_DIR/login-item.log" "$TEMP_FILE"
 plutil -insert StandardErrorPath -string "$LOG_DIR/login-item.log" "$TEMP_FILE"
 
-if [[ -n "${CONTROL_PANEL_CONFIG:-}" ]]; then
-  plutil -insert EnvironmentVariables -dictionary "$TEMP_FILE"
-  plutil -insert EnvironmentVariables.CONTROL_PANEL_CONFIG -string "$CONTROL_PANEL_CONFIG" "$TEMP_FILE"
-fi
+plutil -insert EnvironmentVariables -dictionary "$TEMP_FILE"
+NODE_BIN="${CONTROL_PANEL_NODE:-$(command -v node)}"
+plutil -insert EnvironmentVariables.CONTROL_PANEL_NODE -string "$NODE_BIN" "$TEMP_FILE"
+plutil -insert EnvironmentVariables.PATH -string "$(dirname "$NODE_BIN"):/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" "$TEMP_FILE"
+for setting in CONTROL_PANEL_CONFIG CONTROL_PANEL_DATA CONTROL_PANEL_PORT; do
+  if [[ -n "${!setting:-}" ]]; then
+    plutil -insert "EnvironmentVariables.$setting" -string "${!setting}" "$TEMP_FILE"
+  fi
+done
 
 plutil -lint "$TEMP_FILE" >/dev/null
 chmod 600 "$TEMP_FILE"

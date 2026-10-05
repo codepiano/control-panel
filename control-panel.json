@@ -9,10 +9,11 @@
   "restartCommand": "./scripts/restart.sh",
   "openEntryCommand": "./scripts/open-homepage.sh",
   "openHomepageCommand": "./scripts/open-homepage.sh",
-  "surfaceType": "desktop",
+  "surfaceType": "web",
   "runtimeMode": "development",
   "processMode": "managed",
   "homepageUrl": "https://github.com/codepiano/control-panel.git",
   "specUrl": "https://github.com/codepiano/control-panel-spec/blob/main/spec/PROJECT_TOOLING_SPEC.md",
-  "notes": "macOS 菜单栏项目中控"
+  "notes": "本机 Web 服务中控",
+  "frontendUrl": "http://127.0.0.1:4310"
 }

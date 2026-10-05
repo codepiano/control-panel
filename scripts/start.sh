@@ -6,10 +6,10 @@ SCRIPT_DIR="$PROJECT_ROOT/scripts"
 STATE_DIR="$PROJECT_ROOT/.control-panel"
 PID_FILE="$STATE_DIR/control-panel.pid"
 LOG_FILE="$STATE_DIR/logs/control-panel.log"
-ELECTRON_BIN="$PROJECT_ROOT/node_modules/.bin/electron"
+NODE_BIN="${CONTROL_PANEL_NODE:-$(command -v node || true)}"
 
-if [[ ! -x "$ELECTRON_BIN" ]]; then
-  echo "electron binary not found. Run npm install first." >&2
+if [[ ! -x "$NODE_BIN" ]]; then
+  echo "Node.js not found. Install Node.js or set CONTROL_PANEL_NODE." >&2
   exit 1
 fi
 
@@ -24,8 +24,16 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
 fi
 
-nohup "$SCRIPT_DIR/run.sh" "$@" >"$LOG_FILE" 2>&1 &
-LAUNCHER_PID=$!
+LAUNCHER_PID="$("$NODE_BIN" - "$SCRIPT_DIR/run.sh" "$LOG_FILE" "$@" <<'NODE'
+const fs = require('node:fs');
+const { spawn } = require('node:child_process');
+const [runner, log, ...args] = process.argv.slice(2);
+const output = fs.openSync(log, 'a');
+const child = spawn('/bin/bash', [runner, ...args], { detached: true, stdio: ['ignore', output, output], env: process.env });
+child.once('error', (error) => { console.error(error.message); process.exitCode = 1; });
+child.once('spawn', () => { console.log(child.pid); child.unref(); fs.closeSync(output); });
+NODE
+)"
 echo "$LAUNCHER_PID" > "$PID_FILE"
 
 sleep 1

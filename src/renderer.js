@@ -31,12 +31,20 @@ const els = {
   cancelProjectEditorBtn: document.getElementById('cancelProjectEditorBtn'),
   saveProjectEditorBtn: document.getElementById('saveProjectEditorBtn'),
   rootInput: document.getElementById('rootInput'),
-  browseRootBtn: document.getElementById('browseRootBtn'),
   addRootBtn: document.getElementById('addRootBtn'),
   rootList: document.getElementById('rootList'),
   template: document.getElementById('projectTemplate'),
 };
 
+for (const id of ['sidebarCloseBtn', 'appLayout', 'navToggleBtn', 'navAllBtn', 'navRunningBtn', 'navFavoritesBtn', 'allNavCount', 'runningNavCount', 'favoriteNavCount', 'groupNav', 'tagNav', 'backendStatus', 'backendUptime', 'viewTitle', 'viewDescription', 'visibleCount', 'selectionBar', 'startVisibleBtn', 'groupFilter', 'tagFilter', 'favoriteFilter', 'selectVisible', 'selectionCount', 'batchStartBtn', 'batchGroupBtn', 'clearSelectionBtn', 'batchResult', 'organizationModal', 'organizationForm', 'organizationHint', 'organizationTitle', 'organizationError', 'closeOrganizationBtn', 'saveOrganizationBtn', 'groupOptions', 'tagsField', 'favoriteField', 'scanDepth', 'scanIssues']) els[id] = document.getElementById(id);
+const selectedProjects = new Set();
+let visibleProjects = [];
+let openProjectMenus = new Set();
+let expandedProjectKeys = new Set();
+let organizationKeys = [];
+let groupFilter = 'all';
+let tagFilter = 'all';
+let batchInFlight = false;
 let latestPayload = null;
 let projectSearchQuery = '';
 let statusFilter = 'all';
@@ -84,6 +92,33 @@ function formatTimestamp(isoString) {
   return Number.isNaN(date.getTime()) ? isoString : date.toLocaleString();
 }
 
+function formatUptime(lastStartedAt, status) {
+  if (status !== 'running' || !lastStartedAt) {
+    return '运行时长 —';
+  }
+
+  const startedAt = new Date(lastStartedAt).getTime();
+  if (Number.isNaN(startedAt)) {
+    return '运行时长 —';
+  }
+
+  const totalSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (days > 0) {
+    return `运行 ${days}天 ${hours}小时`;
+  }
+  if (hours > 0) {
+    return `运行 ${hours}小时 ${minutes}分`;
+  }
+  if (minutes > 0) {
+    return `运行 ${minutes}分 ${seconds}秒`;
+  }
+  return `运行 ${seconds}秒`;
+}
+
 function statusLabel(status) {
   switch (status) {
     case 'running':
@@ -116,7 +151,7 @@ function projectMatchesSearch(project, query) {
     return true;
   }
 
-  const haystack = [project.name, project.notes, project.root, project.projectDir, project.workingDirectory]
+  const haystack = [project.name, project.notes, project.root, project.projectDir, project.workingDirectory, project.group, ...(project.tags || []), ...(project.ancestors || []).map((item) => item.name), project.relationship?.role, project.relationship?.notes]
     .filter(Boolean)
     .join(' ')
     .toLocaleLowerCase();
@@ -223,7 +258,7 @@ function renderRootRow(root) {
   title.textContent = root;
 
   const subtitle = document.createElement('span');
-  subtitle.textContent = '只检查根目录和每个直接子目录中的 control-panel.json';
+  subtitle.textContent = '发现入口配置，并继续读取 children 声明的子项目';
 
   const remove = document.createElement('button');
   remove.className = 'ghost';
@@ -270,6 +305,8 @@ function renderProject(project) {
   const status = fragment.querySelector('.status-pill');
   const usage = fragment.querySelector('.project-usage');
   const lastStarted = fragment.querySelector('.project-last-started');
+  const uptime = fragment.querySelector('.project-uptime');
+  const uptimeDetail = fragment.querySelector('.project-uptime-detail');
   const pid = fragment.querySelector('.project-pid');
   const pidDetail = fragment.querySelector('.project-pid-detail');
   const port = fragment.querySelector('.project-port');
@@ -294,6 +331,27 @@ function renderProject(project) {
   const resetProjectIconBtn = fragment.querySelector('.reset-project-icon-btn');
   const projectIconSource = fragment.querySelector('.project-icon-source');
 
+  const checkbox = fragment.querySelector('.project-checkbox');
+  checkbox.checked = selectedProjects.has(project.key);
+  checkbox.setAttribute('aria-label', `选择 ${project.name}`);
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked) selectedProjects.add(project.key); else selectedProjects.delete(project.key);
+    updateSelection();
+  });
+  const labels = fragment.querySelector('.project-labels');
+  for (const label of [project.favorite ? '★ 星标' : '', project.group, project.relationship?.role, ...(project.tags || [])].filter(Boolean)) {
+    const badge = document.createElement('span');
+    badge.textContent = label;
+    labels.appendChild(badge);
+  }
+  const organizationBtn = fragment.querySelector('.organization-btn');
+  organizationBtn.addEventListener('click', () => { projectMenu.open = false; openOrganization([project.key]); });
+  const favoriteBtn = fragment.querySelector('.favorite-btn');
+  favoriteBtn.textContent = project.favorite ? '取消星标' : '添加星标';
+  favoriteBtn.addEventListener('click', async () => {
+    try { await api.saveProjectOrganization([project.key], { favorite: !project.favorite }); await refresh(); }
+    catch (error) { showBatchMessage(`保存失败：${error.message}`); }
+  });
   const outputText = project.details || project.lastOutput || '';
   name.textContent = project.name;
   notes.textContent = project.notes || project.techStack || '未填写说明';
@@ -306,6 +364,8 @@ function renderProject(project) {
   status.setAttribute('aria-label', statusLabel(project.status));
   usage.textContent = String(project.usageCount || 0);
   lastStarted.textContent = project.lastStartedAt ? formatTimestamp(project.lastStartedAt) : '-';
+  uptime.textContent = formatUptime(project.lastStartedAt, project.status);
+  uptimeDetail.textContent = formatUptime(project.lastStartedAt, project.status);
   pid.textContent = project.pid ? `PID ${project.pid}` : 'PID —';
   pidDetail.textContent = project.pid ? String(project.pid) : '-';
   try {
@@ -316,7 +376,7 @@ function renderProject(project) {
   }
   source.textContent = project.source === 'auto' ? `自动发现 · ${project.root}` : '来源：手动配置';
   panelStart.textContent = project.startOnPanelLaunch ? '已启用' : '未启用';
-  root.textContent = project.root || '未配置';
+  root.textContent = [...(project.ancestors || []).map((item) => item.name), project.relationship?.notes].filter(Boolean).join(' / ') || project.root || '未配置';
   dir.textContent = project.projectDir || project.workingDirectory || '未配置';
   const iconSourceLabels = { user: '用户自定义', project: '项目 manifest', fallback: '自动生成' };
   projectIconSource.textContent = iconSourceLabels[project.iconSource] || '自动生成';
@@ -419,7 +479,11 @@ function renderProject(project) {
     }
   });
 
+  card.dataset.key = project.key;
   card.dataset.status = project.status;
+  projectMenu.open = openProjectMenus.has(project.key);
+  if (expandedProjectKeys.has(project.key)) { details.classList.remove('hidden'); detailToggle.textContent = '收起详情'; }
+  if (project.isPanel) { primaryAction.disabled = true; restartBtn.disabled = true; primaryAction.title = '后端自身请通过 scripts/stop.sh 或 restart.sh 管理'; }
   return fragment;
 }
 
@@ -449,7 +513,12 @@ function appendProjectGroup(title, projects) {
   heading.textContent = title;
   const count = document.createElement('span');
   count.textContent = String(projects.length);
-  header.append(heading, count);
+  const startGroup = document.createElement('button');
+  startGroup.className = 'group-start secondary';
+  startGroup.textContent = '启动本组';
+  startGroup.disabled = batchInFlight || !projects.some((project) => project.canBatchStart && project.status !== 'running');
+  startGroup.addEventListener('click', () => runBatch(projects.map((project) => project.key), title));
+  header.append(heading, count, startGroup);
   const rows = document.createElement('div');
   rows.className = 'project-group-rows';
   projects.forEach((project) => rows.appendChild(renderProject(project)));
@@ -458,18 +527,31 @@ function appendProjectGroup(title, projects) {
 }
 
 function renderDashboard(data) {
+  openProjectMenus = new Set([...els.list.querySelectorAll('.card')].filter((card) => card.querySelector('.project-menu')?.open).map((card) => card.dataset.key));
+  expandedProjectKeys = new Set([...els.list.querySelectorAll('.card')].filter((card) => !card.querySelector('.project-details')?.classList.contains('hidden')).map((card) => card.dataset.key));
   latestPayload = data;
   const allProjects = data.projects || [];
   const query = projectSearchQuery.trim().toLocaleLowerCase();
   const projects = sortProjects(allProjects.filter((project) => (
-    (statusFilter === 'all' || project.status === statusFilter) && projectMatchesSearch(project, query)
+    (statusFilter === 'all' || project.status === statusFilter) && projectMatchesSearch(project, query) &&
+    (groupFilter === 'all' || (groupFilter === 'ungrouped' ? !project.group : groupFilter.startsWith('collection:') ? (project.ancestors || []).some((item) => item.key === groupFilter.slice(11)) : project.group === groupFilter.slice(6))) &&
+    (tagFilter === 'all' || (project.tags || []).includes(tagFilter.slice(4))) &&
+    (!els.favoriteFilter.checked || project.favorite)
   )));
+  visibleProjects = projects;
+  const existingKeys = new Set(allProjects.map((project) => project.key));
+  for (const key of selectedProjects) if (!existingKeys.has(key)) selectedProjects.delete(key);
+  renderOrganizationFilters(allProjects, data.scanReport?.collections || []);
   els.list.innerHTML = '';
 
   const runningCount = allProjects.filter((project) => project.status === 'running').length;
   const attentionCount = allProjects.filter((project) => project.status === 'error').length;
   const autoStartCount = allProjects.filter((project) => project.startOnPanelLaunch).length;
-  els.runningSummary.textContent = `${allProjects.length} 个项目 · ${runningCount} 个运行中`;
+  els.runningSummary.textContent = `${allProjects.length} 个服务 · ${runningCount} 个运行中`;
+  renderNavigation(allProjects, data.scanReport?.collections || []);
+  els.backendStatus.textContent = '本机后端已连接';
+  els.backendUptime.textContent = formatUptime(data.backendStartedAt, 'running').replace('运行', '后端已运行');
+  els.visibleCount.textContent = `当前显示 ${projects.length} 个服务`;
   els.runningMetric.textContent = String(runningCount);
   els.autoStartMetric.textContent = String(autoStartCount);
   els.attentionMetric.textContent = String(attentionCount);
@@ -482,11 +564,11 @@ function renderDashboard(data) {
   els.loginToggle.checked = Boolean(data.openAtLogin);
   const loginItemStatus = data.loginItemStatus || {};
   if (loginItemStatus.status === 'enabled') {
-    els.loginItemStatus.textContent = '已启用：登录后在菜单栏静默启动';
+    els.loginItemStatus.textContent = '已启用：登录后启动本机后端服务';
   } else if (loginItemStatus.status === 'stale' || loginItemStatus.status === 'error') {
     els.loginItemStatus.textContent = loginItemStatus.detail || '登录项状态异常';
   } else {
-    els.loginItemStatus.textContent = '未启用：登录后不自动启动';
+    els.loginItemStatus.textContent = '未启用：登录后不自动启动后端';
   }
   if (projects.length === 0) {
     const empty = document.createElement('p');
@@ -496,15 +578,22 @@ function renderDashboard(data) {
       : '没有符合当前搜索或筛选条件的项目。';
     els.list.appendChild(empty);
   } else {
-    const autoStartProjects = projects.filter((project) => project.startOnPanelLaunch);
-    const remainingProjects = projects.filter((project) => !project.startOnPanelLaunch);
-    appendProjectGroup('随面板启动', autoStartProjects);
-    appendProjectGroup('运行中', remainingProjects.filter((project) => project.status === 'running'));
-    appendProjectGroup('状态变化', remainingProjects.filter((project) => ['starting', 'stopping'].includes(project.status)));
-    appendProjectGroup('需要关注', remainingProjects.filter((project) => project.status === 'error'));
-    appendProjectGroup('已停止', remainingProjects.filter((project) => project.status === 'stopped'));
+    const grouped = new Map();
+    for (const project of projects) {
+      const title = project.group || '未分组';
+      if (!grouped.has(title)) grouped.set(title, []);
+      grouped.get(title).push(project);
+    }
+    for (const [title, items] of [...grouped].sort(([a], [b]) => a.localeCompare(b, 'zh-Hans-CN'))) appendProjectGroup(title, items);
   }
 
+  els.scanDepth.value = String(data.config?.scan?.maxDepth ?? 1);
+  els.scanIssues.replaceChildren();
+  for (const issue of data.scanReport?.issues || []) {
+    const line = document.createElement('p'); line.className = 'form-error';
+    line.textContent = `${issue.path}：${issue.detail}`; els.scanIssues.appendChild(line);
+  }
+  updateSelection();
   renderRoots(data.config);
 }
 
@@ -524,6 +613,7 @@ async function refresh() {
   } catch (error) {
     const message = String(error?.message || error || '未知错误');
     els.runningSummary.textContent = `刷新失败：${message}`;
+    els.backendStatus.textContent = '后端连接失败';
     els.refreshBtn.textContent = '刷新失败';
     els.refreshBtn.title = message;
     window.setTimeout(() => {
@@ -541,7 +631,9 @@ async function refresh() {
   }
 }
 
-els.refreshBtn.addEventListener('click', refresh);
+els.refreshBtn.addEventListener('click', async () => {
+  try { await api.refreshProjects(); await refresh(); } catch (error) { showBatchMessage(`刷新失败：${error.message}`); }
+});
 els.projectSearch.addEventListener('input', (event) => {
   projectSearchQuery = event.target.value;
   if (latestPayload) {
@@ -593,7 +685,7 @@ els.projectEditorForm.addEventListener('submit', async (event) => {
   }
 });
 window.addEventListener('keydown', (event) => {
-  const activeModal = !els.projectEditorModal.classList.contains('hidden')
+  const activeModal = !els.organizationModal.classList.contains('hidden') ? els.organizationModal : !els.projectEditorModal.classList.contains('hidden')
     ? els.projectEditorModal
     : !els.settingsModal.classList.contains('hidden')
       ? els.settingsModal
@@ -603,11 +695,12 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Escape') {
-    if (!els.projectEditorModal.classList.contains('hidden')) {
+    if (!els.organizationModal.classList.contains('hidden')) { closeOrganization(); }
+    else if (!els.projectEditorModal.classList.contains('hidden')) {
       closeProjectEditor();
     } else if (!els.settingsModal.classList.contains('hidden')) {
       closeSettings();
-    }
+    } else { closeMobileNavigation(); }
   }
 });
 els.loginToggle.addEventListener('change', async (event) => {
@@ -620,12 +713,6 @@ els.loginToggle.addEventListener('change', async (event) => {
     els.loginItemStatus.textContent = String(error?.message || error || '更新登录项失败');
   } finally {
     els.loginToggle.disabled = false;
-  }
-});
-els.browseRootBtn.addEventListener('click', async () => {
-  const roots = await api.chooseProjectRoots();
-  if (Array.isArray(roots) && roots.length > 0) {
-    els.rootInput.value = roots[0];
   }
 });
 els.addRootBtn.addEventListener('click', async () => {
@@ -641,16 +728,151 @@ els.addRootBtn.addEventListener('click', async () => {
   await refresh();
 });
 
-api.onProjectsUpdated((payload) => {
-  renderDashboard(payload);
-});
-
-api.onAppReady((payload) => {
-  if (payload && payload.configPath) {
-    els.configPath.textContent = payload.configPath;
-  }
-});
-
 refresh().catch((error) => {
   els.runningSummary.textContent = `加载失败：${String(error.message || error)}`;
 });
+
+function renderOrganizationFilters(projects, collections) {
+  const groups = [...new Set(projects.map((project) => project.group).filter(Boolean))].sort();
+  const tags = [...new Set(projects.flatMap((project) => project.tags || []))].sort();
+  const fill = (select, options, value) => { select.replaceChildren(...options.map(([key, title]) => new Option(title, key))); select.value = value; };
+  fill(els.groupFilter, [['all', '全部分组'], ['ungrouped', '未分组'], ...groups.map((group) => [`group:${group}`, group]), ...collections.map((collection) => [`collection:${collection.key}`, `集合：${collection.name}（含子项目）`])], groupFilter);
+  fill(els.tagFilter, [['all', '全部标签'], ...tags.map((tag) => [`tag:${tag}`, tag])], tagFilter);
+  if (!els.groupFilter.value) { els.groupFilter.add(new Option('当前分组（暂无服务）', groupFilter)); els.groupFilter.value = groupFilter; }
+  if (!els.tagFilter.value) { els.tagFilter.add(new Option('当前标签（暂无服务）', tagFilter)); els.tagFilter.value = tagFilter; }
+  els.groupOptions.replaceChildren(...groups.map((group) => new Option(group, group)));
+}
+function updateSelection() {
+  els.selectionBar.classList.toggle('hidden', !selectedProjects.size);
+  els.selectionCount.textContent = `已选 ${selectedProjects.size} 项`;
+  els.startVisibleBtn.disabled = batchInFlight || !visibleProjects.some((project) => project.canBatchStart && project.status !== 'running');
+  els.batchStartBtn.disabled = batchInFlight || !selectedProjects.size;
+  els.batchGroupBtn.disabled = batchInFlight || !selectedProjects.size;
+  els.clearSelectionBtn.disabled = !selectedProjects.size;
+  const selectedVisible = visibleProjects.filter((project) => selectedProjects.has(project.key)).length;
+  els.selectVisible.checked = visibleProjects.length > 0 && selectedVisible === visibleProjects.length;
+  els.selectVisible.indeterminate = selectedVisible > 0 && selectedVisible < visibleProjects.length;
+  els.selectVisible.disabled = !visibleProjects.length;
+}
+function showBatchMessage(message) {
+  els.batchResult.classList.remove('hidden');
+  els.batchResult.textContent = message;
+}
+async function runBatch(keys, title) {
+  if (batchInFlight) return;
+  batchInFlight = true;
+  renderDashboard(latestPayload);
+  showBatchMessage(`正在启动 ${title}，共 ${keys.length} 项…`);
+  try {
+    const results = await api.startProjects(keys);
+    const count = (outcome) => results.filter((item) => item.outcome === outcome).length;
+    showBatchMessage(`启动命令已执行 ${count('started')} 项 · 跳过 ${count('skipped')} 项 · 失败 ${count('failed')} 项。运行状态会自动刷新。`);
+    const details = document.createElement('details');
+    const summary = document.createElement('summary'); summary.textContent = '逐项结果'; details.appendChild(summary);
+    const labels = { started: '已执行', skipped: '跳过', failed: '失败' };
+    for (const item of results) {
+      const line = document.createElement('p'); line.textContent = `${item.name} · ${labels[item.outcome]}：${item.detail}`; details.appendChild(line);
+    }
+    els.batchResult.appendChild(details);
+  } catch (error) { showBatchMessage(`批量启动失败：${error.message}`); }
+  finally { batchInFlight = false; await refresh(); }
+}
+function openOrganization(keys) {
+  rememberModalFocus(); organizationKeys = [...keys];
+  const project = latestPayload.projects.find((item) => item.key === keys[0]);
+  const batch = keys.length > 1;
+  els.organizationTitle.textContent = batch ? '批量归组' : '服务标记与分组';
+  els.organizationHint.textContent = batch ? `为所选 ${keys.length} 个服务设置同一个分组` : project.name;
+  els.organizationForm.elements.group.value = batch ? '' : project.localGroup || '';
+  els.organizationForm.elements.tags.value = batch ? '' : (project.tags || []).join(', ');
+  els.organizationForm.elements.favorite.checked = project.favorite;
+  els.tagsField.hidden = batch; els.favoriteField.hidden = batch;
+  els.organizationError.classList.add('hidden');
+  els.organizationModal.classList.remove('hidden'); els.organizationModal.setAttribute('aria-hidden', 'false');
+  els.organizationForm.elements.group.focus();
+}
+function closeOrganization() {
+  els.organizationModal.classList.add('hidden'); els.organizationModal.setAttribute('aria-hidden', 'true'); restoreModalFocus();
+}
+els.organizationForm.addEventListener('submit', async (event) => {
+  event.preventDefault(); els.saveOrganizationBtn.disabled = true;
+  const form = els.organizationForm.elements;
+  const input = { group: form.group.value };
+  if (organizationKeys.length === 1) { input.tags = form.tags.value.split(/[,，]/); input.favorite = form.favorite.checked; }
+  try { await api.saveProjectOrganization(organizationKeys, input); closeOrganization(); await refresh(); }
+  catch (error) { els.organizationError.textContent = error.message; els.organizationError.classList.remove('hidden'); }
+  finally { els.saveOrganizationBtn.disabled = false; }
+});
+els.closeOrganizationBtn.addEventListener('click', closeOrganization);
+els.organizationModal.addEventListener('click', (event) => { if (event.target === els.organizationModal) closeOrganization(); });
+els.startVisibleBtn.addEventListener('click', () => runBatch(visibleProjects.map((project) => project.key), '当前列表'));
+els.batchStartBtn.addEventListener('click', () => runBatch([...selectedProjects], '所选服务'));
+els.batchGroupBtn.addEventListener('click', () => openOrganization([...selectedProjects]));
+els.clearSelectionBtn.addEventListener('click', () => { selectedProjects.clear(); renderDashboard(latestPayload); });
+els.selectVisible.addEventListener('change', () => {
+  for (const project of visibleProjects) { if (els.selectVisible.checked) selectedProjects.add(project.key); else selectedProjects.delete(project.key); }
+  renderDashboard(latestPayload);
+});
+els.groupFilter.addEventListener('change', () => { groupFilter = els.groupFilter.value; renderDashboard(latestPayload); });
+els.tagFilter.addEventListener('change', () => { tagFilter = els.tagFilter.value; renderDashboard(latestPayload); });
+els.favoriteFilter.addEventListener('change', () => renderDashboard(latestPayload));
+els.scanDepth.addEventListener('change', async () => {
+  try { await api.setScanDepth(Number(els.scanDepth.value)); await refresh(); }
+  catch (error) { els.scanIssues.textContent = error.message; }
+});
+window.setInterval(refresh, 5000);
+
+window.addEventListener('unhandledrejection', (event) => { showBatchMessage(`操作失败：${String(event.reason?.message || event.reason)}`); event.preventDefault(); });
+
+function renderNavigation(projects, collections) {
+  els.allNavCount.textContent = projects.length;
+  els.runningNavCount.textContent = projects.filter((project) => project.status === 'running').length;
+  els.favoriteNavCount.textContent = projects.filter((project) => project.favorite).length;
+  const allScope = groupFilter === 'all' && tagFilter === 'all';
+  for (const [button, active] of [[els.navAllBtn, allScope && statusFilter === 'all' && !els.favoriteFilter.checked], [els.navRunningBtn, allScope && statusFilter === 'running' && !els.favoriteFilter.checked], [els.navFavoritesBtn, allScope && els.favoriteFilter.checked]]) {
+    button.classList.toggle('is-active', active); button.setAttribute('aria-pressed', String(active));
+  }
+  els.groupNav.replaceChildren();
+  const scopeButton = (value, name, count) => {
+    const button = document.createElement('button'); button.className = 'nav-item';
+    button.classList.toggle('is-active', groupFilter === value); button.setAttribute('aria-pressed', String(groupFilter === value));
+    const label = document.createElement('span'); label.textContent = name;
+    const badge = document.createElement('span'); badge.className = 'nav-count'; badge.textContent = count;
+    button.append(label, badge); button.addEventListener('click', () => {
+      groupFilter = groupFilter === value ? 'all' : value; tagFilter = 'all'; statusFilter = 'all'; els.statusFilter.value = 'all'; els.favoriteFilter.checked = false;
+      renderDashboard(latestPayload); closeMobileNavigation();
+    }); els.groupNav.appendChild(button);
+  };
+  for (const collection of collections) scopeButton(`collection:${collection.key}`, `${collection.ancestors.length ? '↳ ' : ''}${collection.name}`, projects.filter((project) => (project.ancestors || []).some((item) => item.key === collection.key)).length);
+  const collectionGroups = new Set(collections.map((collection) => [...collection.ancestors.map((item) => item.name), collection.name].join(' / ')));
+  const groups = [...new Set(projects.map((project) => project.group).filter(Boolean))].sort();
+  for (const group of groups) if (!collectionGroups.has(group) || projects.some((project) => project.localGroup === group)) scopeButton(`group:${group}`, group, projects.filter((project) => project.group === group).length);
+  const ungrouped = projects.filter((project) => !project.group).length;
+  if (ungrouped) scopeButton('ungrouped', '未分组', ungrouped);
+  if (!collections.length && !groups.length) {
+    const note = document.createElement('p'); note.className = 'nav-empty'; note.textContent = '在服务菜单中归组，或用外层配置声明子项目。'; els.groupNav.appendChild(note);
+  }
+  els.tagNav.replaceChildren();
+  const tags = [...new Set(projects.flatMap((project) => project.tags || []))].sort();
+  for (const tag of tags) {
+    const button = document.createElement('button'); button.textContent = tag; button.classList.toggle('is-active', tagFilter === `tag:${tag}`); button.setAttribute('aria-pressed', String(tagFilter === `tag:${tag}`));
+    button.addEventListener('click', () => { tagFilter = tagFilter === `tag:${tag}` ? 'all' : `tag:${tag}`; renderDashboard(latestPayload); closeMobileNavigation(); }); els.tagNav.appendChild(button);
+  }
+  if (!tags.length) { const note = document.createElement('p'); note.className = 'nav-empty'; note.textContent = '为服务加上标签，快速组合不同工作环境。'; els.tagNav.appendChild(note); }
+  const selectedCollection = collections.find((collection) => groupFilter === `collection:${collection.key}`);
+  els.viewTitle.textContent = selectedCollection?.name || (groupFilter.startsWith('group:') ? groupFilter.slice(6) : groupFilter === 'ungrouped' ? '未分组服务' : els.favoriteFilter.checked ? '星标服务' : statusFilter === 'running' ? '运行中的服务' : '全部服务');
+  if (tagFilter !== 'all') els.viewTitle.textContent += ` · ${tagFilter.slice(4)}`;
+  els.viewDescription.textContent = selectedCollection ? selectedCollection.notes || '按外层配置声明的归属关系，管理工作区内的所有服务。' : '把分散的服务组织起来，随时启动你需要的工作环境。';
+}
+function closeMobileNavigation() { els.appLayout.classList.remove('sidebar-open'); els.navToggleBtn.setAttribute('aria-expanded', 'false'); }
+function selectView(view) {
+  groupFilter = 'all'; tagFilter = 'all'; statusFilter = view === 'running' ? 'running' : 'all';
+  els.statusFilter.value = statusFilter; els.favoriteFilter.checked = view === 'favorites';
+  projectSearchQuery = ''; els.projectSearch.value = '';
+  renderDashboard(latestPayload); closeMobileNavigation();
+}
+els.navAllBtn.addEventListener('click', () => selectView('all'));
+els.navRunningBtn.addEventListener('click', () => selectView('running'));
+els.navFavoritesBtn.addEventListener('click', () => selectView('favorites'));
+els.sidebarCloseBtn.addEventListener('click', closeMobileNavigation);
+els.navToggleBtn.addEventListener('click', () => { const open = els.appLayout.classList.toggle('sidebar-open'); els.navToggleBtn.setAttribute('aria-expanded', String(open)); });
