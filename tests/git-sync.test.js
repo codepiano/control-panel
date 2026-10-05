@@ -110,3 +110,33 @@ test('a failed push keeps remote history intact and does not stop other reposito
   assert.equal(git(first.remote, 'rev-parse', 'main'), previous);
   assert.equal(git(second.remote, 'rev-parse', 'main'), git(second.one, 'rev-parse', 'HEAD'));
 });
+
+test('process all chooses pull or push per repository and skips dirty or diverged histories', async () => {
+  const pull = fixture('all-pull');
+  const push = fixture('all-push');
+  const dirty = fixture('all-dirty');
+  const diverged = fixture('all-diverged');
+  commit(pull.two, 'remote.txt', 'pull-new'); git(pull.two, 'push');
+  commit(push.one, 'local.txt', 'push-new');
+  commit(dirty.two, 'remote.txt', 'dirty-remote'); git(dirty.two, 'push');
+  fs.writeFileSync(path.join(dirty.one, 'file.txt'), 'unfinished');
+  commit(diverged.two, 'remote.txt', 'diverged-remote'); git(diverged.two, 'push');
+  commit(diverged.one, 'local.txt', 'diverged-local');
+  const dirtyHead = git(dirty.one, 'rev-parse', 'HEAD');
+  const localHead = git(diverged.one, 'rev-parse', 'HEAD');
+  const remoteHead = git(diverged.remote, 'rev-parse', 'main');
+  const service = manager(pull, { getProjects: () => [pull, push, dirty, diverged].map((f, index) => ({ key: String(index), projectDir: f.one })) });
+  const state = await run(service, 'sync');
+  assert.equal(state.operation, 'sync');
+  assert.deepEqual(state.results.map((item) => [item.outcome, item.detail]), [
+    ['success', '已快进更新'], ['success', '已推送'], ['skipped', '有未提交修改'], ['skipped', '分支已分叉，需要先处理合并'],
+  ]);
+  assert.equal(git(pull.one, 'rev-parse', 'HEAD'), git(pull.remote, 'rev-parse', 'main'));
+  assert.equal(git(push.one, 'rev-parse', 'HEAD'), git(push.remote, 'rev-parse', 'main'));
+  assert.equal(git(dirty.one, 'rev-parse', 'HEAD'), dirtyHead);
+  assert.equal(fs.readFileSync(path.join(dirty.one, 'file.txt'), 'utf8'), 'unfinished');
+  assert.equal(git(diverged.one, 'rev-parse', 'HEAD'), localHead);
+  assert.equal(git(diverged.remote, 'rev-parse', 'main'), remoteHead);
+  const again = await run(service, 'sync');
+  assert.deepEqual(again.results.slice(0, 2).map((item) => item.detail), ['无需同步', '无需同步']);
+});

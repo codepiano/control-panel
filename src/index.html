@@ -61,9 +61,9 @@
 
   <div id="repositorySyncModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="repositorySyncTitle" aria-hidden="true"><section class="modal-card repository-sync-card">
     <div class="modal-header"><div><p class="eyebrow">REPOSITORY SYNC</p><h2 id="repositorySyncTitle">仓库同步</h2><p>每天凌晨 03:00 检查，错过后在唤醒或启动时补查。推送与拉取由你执行。</p></div><button id="closeRepositorySyncBtn" class="button subtle">关闭</button></div>
-    <div class="repository-toolbar"><button id="checkAllRepositoriesBtn" class="button primary">检查所有仓库</button><button id="pullAllRepositoriesBtn" class="button secondary">拉取全部可更新仓库</button><button id="pushAllRepositoriesBtn" class="button secondary">推送全部待推仓库</button></div>
-    <p id="repositorySyncStatus" role="status" aria-live="polite"></p><p id="repositorySchedule" class="field-help"></p>
-    <div class="repository-view-tabs" role="group" aria-label="仓库筛选"><button id="repositoryAttentionBtn" class="button secondary" aria-pressed="true">需要处理</button><button id="repositoryAllBtn" class="button secondary" aria-pressed="false">全部仓库</button></div><div id="repositoryList" class="repository-list"></div><div id="repositoryResults" class="repository-results" role="status"></div>
+    <div class="repository-toolbar"><button id="syncAllRepositoriesBtn" class="button primary">处理全部</button><button id="checkAllRepositoriesBtn" class="button secondary">检查所有仓库</button><button id="pullAllRepositoriesBtn" class="button secondary">拉取全部可更新仓库</button><button id="pushAllRepositoriesBtn" class="button secondary">推送全部待推仓库</button></div>
+    <p id="repositoryActionSummary" class="repository-action-summary"></p><p id="repositorySyncStatus" role="status" aria-live="polite"></p><p id="repositorySchedule" class="field-help"></p>
+    <div class="repository-view-tabs" role="group" aria-label="仓库筛选"><button id="repositoryAttentionBtn" class="button secondary" aria-pressed="true">需要处理</button><button id="repositoryPullBtn" class="button secondary" aria-pressed="false">待拉取</button><button id="repositoryPushBtn" class="button secondary" aria-pressed="false">待推送</button><button id="repositoryAllBtn" class="button secondary" aria-pressed="false">全部仓库</button></div><div id="repositoryList" class="repository-list"></div><div id="repositoryResults" class="repository-results" role="status"></div>
   </section></div>
 
   <input id="iconUpload" type="file" accept="image/png" hidden />

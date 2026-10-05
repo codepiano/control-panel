@@ -70,7 +70,7 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
     } catch (error) { return { ...repo, error: error.message, status: 'error', checkedAt: now().toISOString() }; }
   }
   async function execute(kind, keys, scheduled = false) {
-    if (!['check', 'pull', 'push'].includes(kind)) throw new Error('未知仓库操作');
+    if (!['check', 'pull', 'push', 'sync'].includes(kind)) throw new Error('未知仓库操作');
     if (keys !== undefined && (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string'))) throw new Error('仓库参数应为数组');
     await discover();
     const retry = scheduled && state.lastAttemptSlot === dailySlot(now()) && state.repositories.some((repo) => repo.error);
@@ -84,18 +84,19 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
       let updated = await checkOne(repo);
       let outcome = updated.error ? 'failed' : 'checked', detail = updated.error || (updated.upstream && updated.remoteUrl ? '远端状态已更新' : '已检查本地状态；没有可同步的跟踪分支');
       if (kind !== 'check' && !updated.error) {
-        const blocked = !updated.branch ? '当前为 detached HEAD' : !updated.upstream || !updated.remoteUrl || !updated.mergeRef.startsWith('refs/heads/') ? '未配置远端跟踪分支' : updated.dirty ? '有未提交修改' : updated.inProgress ? 'Git 操作进行中' : updated.ahead && updated.behind ? '分支已分叉，需要先处理合并' : kind === 'push' && updated.behind ? '远端有新提交，请先拉取' : '';
+        const action = kind === 'sync' ? (updated.behind ? 'pull' : 'push') : kind;
+        const blocked = !updated.branch ? '当前为 detached HEAD' : !updated.upstream || !updated.remoteUrl || !updated.mergeRef.startsWith('refs/heads/') ? '未配置远端跟踪分支' : updated.dirty ? '有未提交修改' : updated.inProgress ? 'Git 操作进行中' : updated.ahead && updated.behind ? '分支已分叉，需要先处理合并' : action === 'push' && updated.behind ? '远端有新提交，请先拉取' : '';
         if (blocked) { outcome = 'skipped'; detail = blocked; }
-        else if (!(kind === 'push' ? updated.ahead : updated.behind)) { outcome = 'skipped'; detail = '无需同步'; }
+        else if (!(action === 'push' ? updated.ahead : updated.behind)) { outcome = 'skipped'; detail = '无需同步'; }
         else {
           try {
             // Re-read local state immediately before changing the branch or publishing commits.
             const current = await inspectRepository(repo);
             if (current.head !== updated.head || current.branch !== updated.branch || current.upstream !== updated.upstream || current.dirty || current.inProgress) throw new Error('仓库状态发生变化，请重新检查');
-            if (kind === 'pull') await git(repo.directory, ['merge', '--ff-only', '@{upstream}']);
+            if (action === 'pull') await git(repo.directory, ['merge', '--ff-only', '@{upstream}']);
             else await git(repo.directory, ['push', '--', current.remote, `HEAD:${current.mergeRef}`]);
             updated = { ...await inspectRepository(repo), checkedAt: now().toISOString(), error: '' };
-            outcome = 'success'; detail = kind === 'pull' ? '已快进更新' : '已推送';
+            outcome = 'success'; detail = action === 'pull' ? '已快进更新' : '已推送';
           } catch (error) { outcome = 'failed'; detail = error.message; updated = { ...updated, status: 'error', error: detail }; }
         }
       }

@@ -1391,7 +1391,7 @@ function registerActions() {
   registerAction('get-repository-sync', () => gitSync.snapshot());
   registerAction('check-repositories', (keys) => gitSync.request('check', keys));
   registerAction('sync-repositories', (kind, keys) => {
-    if (!['pull', 'push'].includes(kind)) throw new Error('只支持拉取或推送');
+    if (!['pull', 'push', 'sync'].includes(kind)) throw new Error('只支持拉取、推送或处理全部');
     return gitSync.request(kind, keys);
   });
   registerAction('get-dashboard-data', async () => {

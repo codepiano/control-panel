@@ -239,3 +239,6 @@ h1 { margin: 0; font-size: 30px; font-weight: 650; line-height: 1.25; letter-spa
 .repository-view-tabs [aria-pressed='true'] { background: #fff1d6; border-color: #edc482; color: #92510b; }
 .repository-guidance { font-size: 12px; line-height: 1.7; color: #92510b; margin: 9px 0; }
 .repository-empty { padding: 18px 20px; font-size: 12px; color: var(--muted); }
+
+.repository-action-summary { padding: 12px 14px; border: 1px solid #edc482; border-radius: 8px; background: #fff1d6; color: #92510b; font-size: 12px; line-height: 1.8; }
+.repository-view-tabs { flex-wrap: wrap; }

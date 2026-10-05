@@ -989,7 +989,7 @@ els.sidebarCloseBtn.addEventListener('click', closeMobileNavigation);
 els.navToggleBtn.addEventListener('click', () => { const open = els.appLayout.classList.toggle('sidebar-open'); els.navToggleBtn.setAttribute('aria-expanded', String(open)); });
 
 
-const repoEls = Object.fromEntries(['repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults', 'repositoryAttentionBtn', 'repositoryAllBtn'].map((id) => [id, document.getElementById(id)]));
+const repoEls = Object.fromEntries(['repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults', 'repositoryAttentionBtn', 'repositoryAllBtn', 'repositoryPullBtn', 'repositoryPushBtn', 'repositoryActionSummary', 'syncAllRepositoriesBtn'].map((id) => [id, document.getElementById(id)]));
 let repositoryPayload = null;
 let repositoryView = 'attention';
 let repositoryPoll = null;
@@ -1009,13 +1009,31 @@ function renderRepositorySync(payload) {
   updateRepositoryIndicators();
   const repositories = payload.repositories || [];
   const pending = repositories.filter(repositoryNeedsAttention).length;
+  const pulls = repositories.filter((repo) => repo.behind && !repo.ahead);
+  const pushes = repositories.filter((repo) => repo.ahead && !repo.behind);
+  const readyPulls = pulls.filter((repo) => repositoryCanSync(repo, 'pull')).length;
+  const readyPushes = pushes.filter((repo) => repositoryCanSync(repo, 'push')).length;
+  const manual = repositories.filter((repo) => repositoryNeedsAttention(repo) && !repositoryCanSync(repo, 'pull') && !repositoryCanSync(repo, 'push')).length;
+  repoEls.repositoryActionSummary.textContent = `待拉取 ${pulls.length} 个（可处理 ${readyPulls}） · 待推送 ${pushes.length} 个（可处理 ${readyPushes}） · 需人工处理 ${manual} 个`;
+
   repoEls.repositoryPendingCount.textContent = String(pending);
   repoEls.repositorySyncNav.classList.toggle('needs-attention', pending > 0);
-  for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = payload.busy;
+  for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'syncAllRepositoriesBtn']) repoEls[id].disabled = payload.busy;
+  repoEls.pullAllRepositoriesBtn.textContent = `拉取全部 ${readyPulls}`;
+  repoEls.pushAllRepositoriesBtn.textContent = `推送全部 ${readyPushes}`;
+  repoEls.syncAllRepositoriesBtn.textContent = `处理全部 ${readyPulls + readyPushes}`;
+  repoEls.pullAllRepositoriesBtn.disabled = payload.busy || !readyPulls;
+  repoEls.pushAllRepositoriesBtn.disabled = payload.busy || !readyPushes;
+  repoEls.syncAllRepositoriesBtn.disabled = payload.busy || !(readyPulls + readyPushes);
+  repoEls.syncAllRepositoriesBtn.title = '逐项重新检查并拉取或推送，需人工处理的仓库会跳过并列出原因';
   repoEls.checkRepositoriesBtn.textContent = payload.busy ? '仓库处理中…' : '检查仓库同步';
-  repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
+  repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : payload.operation === 'sync' ? '同步' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
   repoEls.repositorySchedule.textContent = `下次计划：${formatTimestamp(payload.nextCheckAt)}（本机时区） · 检查失败 15 分钟后重试 · 同一仓库只检查一次`;
   repoEls.repositoryAttentionBtn.textContent = `需要处理 ${pending}`;
+  repoEls.repositoryPullBtn.textContent = `待拉取 ${pulls.length}`;
+  repoEls.repositoryPushBtn.textContent = `待推送 ${pushes.length}`;
+  repoEls.repositoryPullBtn.setAttribute('aria-pressed', String(repositoryView === 'pull'));
+  repoEls.repositoryPushBtn.setAttribute('aria-pressed', String(repositoryView === 'push'));
   repoEls.repositoryAllBtn.textContent = `全部仓库 ${repositories.length}`;
   repoEls.repositoryAttentionBtn.setAttribute('aria-pressed', String(repositoryView === 'attention'));
   repoEls.repositoryAllBtn.setAttribute('aria-pressed', String(repositoryView === 'all'));
@@ -1042,15 +1060,15 @@ function renderRepositorySync(payload) {
     const buttons = document.createElement('div'); buttons.className = 'repository-actions';
     for (const [kind, label] of [['check', '检查'], ['pull', '拉取'], ['push', '推送']]) {
       const button = document.createElement('button'); button.className = 'button secondary'; button.textContent = label;
-      button.disabled = payload.busy || (kind !== 'check' && (repo.status === 'unchecked' || !!repo.error || !!repo.dirty || !!repo.inProgress || repo.status === 'diverged' || !(kind === 'push' ? repo.ahead && !repo.behind : repo.behind && !repo.ahead)));
+      button.disabled = payload.busy || (kind !== 'check' && !repositoryCanSync(repo, kind));
       button.addEventListener('click', () => runRepositoryAction(kind, [repo.key])); buttons.appendChild(button);
     }
     row.append(info, buttons); repoEls.repositoryList.appendChild(row);
     if (repositoryView === 'all') for (const child of repositories.filter((candidate) => parentKeys.get(candidate.key) === repo.key)) renderRepo(child, depth + 1);
   };
-  const displayed = repositoryView === 'attention' ? repositories.filter(repositoryNeedsAttention) : repositories.filter((repo) => !parentKeys.get(repo.key));
+  const displayed = repositoryView === 'attention' ? repositories.filter(repositoryNeedsAttention) : repositoryView === 'pull' ? pulls : repositoryView === 'push' ? pushes : repositories.filter((repo) => !parentKeys.get(repo.key));
   displayed.forEach((repo) => renderRepo(repo));
-  if (repositories.length && !displayed.length) { const empty = document.createElement('p'); empty.className = 'repository-empty'; empty.textContent = '目前没有需要处理的仓库。'; repoEls.repositoryList.appendChild(empty); }
+  if (repositories.length && !displayed.length) { const empty = document.createElement('p'); empty.className = 'repository-empty'; empty.textContent = repositoryView === 'pull' ? '目前没有待拉取的仓库。' : repositoryView === 'push' ? '目前没有待推送的仓库。' : '目前没有需要处理的仓库。'; repoEls.repositoryList.appendChild(empty); }
   if (!repositories.length) { const empty = document.createElement('p'); empty.className = 'field-help'; empty.textContent = '当前项目中没有可识别的 Git 仓库。'; repoEls.repositoryList.appendChild(empty); }
   repoEls.repositoryResults.replaceChildren();
   for (const result of payload.results || []) {
@@ -1067,17 +1085,18 @@ async function readRepositorySync() {
 }
 async function runRepositoryAction(kind, keys) {
   if (repositoryPayload?.busy) return;
-  for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = true;
+  for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'syncAllRepositoriesBtn']) repoEls[id].disabled = true;
   try { renderRepositorySync(kind === 'check' ? await api.checkRepositories(keys) : await api.syncRepositories(kind, keys)); }
-  catch (error) { repoEls.repositorySyncStatus.textContent = error.message; for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = false; }
+  catch (error) { repoEls.repositorySyncStatus.textContent = error.message; for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'syncAllRepositoriesBtn']) repoEls[id].disabled = false; }
   clearTimeout(repositoryPoll); repositoryPoll = setTimeout(readRepositorySync, 1000);
 }
 repoEls.repositorySyncNav.addEventListener('click', () => openRepositorySync());
-for (const [button, view] of [[repoEls.repositoryAttentionBtn, 'attention'], [repoEls.repositoryAllBtn, 'all']]) {
+for (const [button, view] of [[repoEls.repositoryAttentionBtn, 'attention'], [repoEls.repositoryAllBtn, 'all'], [repoEls.repositoryPullBtn, 'pull'], [repoEls.repositoryPushBtn, 'push']]) {
   button.addEventListener('click', () => { repositoryView = view; if (repositoryPayload) renderRepositorySync(repositoryPayload); });
 }
 repoEls.closeRepositorySyncBtn.addEventListener('click', closeRepositorySync);
 repoEls.checkRepositoriesBtn.addEventListener('click', () => { openRepositorySync(); runRepositoryAction('check'); });
+repoEls.syncAllRepositoriesBtn.addEventListener('click', () => runRepositoryAction('sync'));
 repoEls.checkAllRepositoriesBtn.addEventListener('click', () => runRepositoryAction('check'));
 repoEls.pullAllRepositoriesBtn.addEventListener('click', () => runRepositoryAction('pull'));
 repoEls.pushAllRepositoriesBtn.addEventListener('click', () => runRepositoryAction('push'));
@@ -1124,4 +1143,8 @@ function repositoryActionGuidance(repo) {
   else if (repo.behind) actions.push(`远端有 ${repo.behind} 个新提交：${repo.dirty || repo.inProgress || repo.error ? '处理上述问题后再拉取' : '点击「拉取」更新本机代码'}`);
   else if (repo.ahead) actions.push(`本地有 ${repo.ahead} 个未推送提交：${repo.dirty || repo.inProgress || repo.error ? '处理上述问题后再推送' : '点击「推送」上传到远端'}`);
   return actions.join('；');
+}
+
+function repositoryCanSync(repo, kind) {
+  return Boolean(repo.branch && repo.upstream && repo.remoteUrl && repo.mergeRef?.startsWith('refs/heads/') && !repo.error && !repo.dirty && !repo.inProgress && !['unchecked', 'error', 'diverged', 'detached', 'untracked'].includes(repo.status) && (kind === 'pull' ? repo.behind && !repo.ahead : repo.ahead && !repo.behind));
 }
