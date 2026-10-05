@@ -31,6 +31,7 @@ writeManifest(root, { id: 'workspace', name: 'Workspace', kind: 'collection', ch
 fs.writeFileSync(process.env.CONTROL_PANEL_CONFIG, JSON.stringify({ roots: [path.join(root, 'repos/one/api'), root], scan: { maxDepth: 0 }, projectPreferences: { [worker]: { startOnPanelLaunch: true, tags: [' existing ', 'existing'], favorite: true } } }));
 let server;
 after(async () => {
+  core.shutdown();
   if (server) await new Promise((resolve) => server.close(resolve));
   fs.rmSync(temporary, { recursive: true, force: true });
 });
@@ -81,6 +82,7 @@ test('nested collections are not counted as runtimes and collection lifecycle de
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json'), 'utf8'));
   manifest.children.push({ path: 'nested' }, { path: 'invalid' });
   writeManifest(root, manifest);
+  await core.invoke('refresh-projects');
   const payload = await core.invoke('get-dashboard-data');
   assert.equal(payload.scanReport.collections.length, 2);
   assert.equal(payload.projects.length, 5);
@@ -118,7 +120,7 @@ test('batch launch reports lifecycle wrapper exit failures and keeps subsequent 
   const key = writeManifest(path.join(root, 'fails-fast'), { name: 'Fails fast', workingDirectory: '.', startCommand: 'echo startup-failed >&2; exit 7', statusCommand: 'exit 1' });
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json'), 'utf8'));
   manifest.children.push({ path: 'fails-fast' }); writeManifest(root, manifest);
-  await core.invoke('get-dashboard-data');
+  await core.invoke('refresh-projects');
   const results = await core.invoke('start-projects', [[key, running]]);
   assert.equal(results[0].outcome, 'failed');
   assert.ok(results[0].detail.includes('7'));
@@ -126,4 +128,23 @@ test('batch launch reports lifecycle wrapper exit failures and keeps subsequent 
   assert.equal(results[1].outcome, 'skipped');
   const payload = await core.invoke('get-dashboard-data');
   assert.equal(payload.projects.find((project) => project.key === key).status, 'error');
+});
+
+
+test('dashboard reads share status checks across clients while explicit refresh invalidates the snapshot', async () => {
+  const counter = path.join(temporary, 'status-check-count');
+  const key = writeManifest(path.join(root, 'counted'), { name: 'Counted', workingDirectory: '.', statusCommand: `echo check >> '${counter}'; exit 0` });
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json'), 'utf8'));
+  manifest.children.push({ path: 'counted' }); writeManifest(root, manifest);
+  await core.invoke('refresh-projects');
+  const reads = await Promise.all(Array.from({ length: 8 }, () => core.invoke('get-dashboard-data')));
+  assert.equal(fs.readFileSync(counter, 'utf8').trim().split('\n').length, 1);
+  assert.ok(reads.every((payload) => payload.updatedAt === reads[0].updatedAt));
+  assert.equal(reads[0].statusRefreshMs, 30000);
+  await core.invoke('save-project-organization', [[key], { group: 'New group' }]);
+  const changed = await core.invoke('get-dashboard-data');
+  assert.equal(changed.projects.find((project) => project.key === key).group, 'New group');
+  assert.equal(fs.readFileSync(counter, 'utf8').trim().split('\n').length, 2);
+  await core.invoke('refresh-projects');
+  assert.equal(fs.readFileSync(counter, 'utf8').trim().split('\n').length, 3);
 });

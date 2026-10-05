@@ -480,6 +480,7 @@ function renderProject(project) {
   });
 
   card.dataset.key = project.key;
+  card.dataset.startedAt = project.lastStartedAt || '';
   card.dataset.status = project.status;
   projectMenu.open = openProjectMenus.has(project.key);
   if (expandedProjectKeys.has(project.key)) { details.classList.remove('hidden'); detailToggle.textContent = '收起详情'; }
@@ -609,7 +610,8 @@ async function refresh() {
 
   try {
     const data = await api.getDashboardData();
-    renderDashboard(data);
+    if (!latestPayload || (latestPayload.snapshotId || latestPayload.updatedAt) !== (data.snapshotId || data.updatedAt) || els.backendStatus.textContent !== '本机后端已连接') renderDashboard(data);
+    else updateRuntimeDisplays();
   } catch (error) {
     const message = String(error?.message || error || '未知错误');
     els.runningSummary.textContent = `刷新失败：${message}`;
@@ -820,7 +822,19 @@ els.scanDepth.addEventListener('change', async () => {
   try { await api.setScanDepth(Number(els.scanDepth.value)); await refresh(); }
   catch (error) { els.scanIssues.textContent = error.message; }
 });
-window.setInterval(refresh, 5000);
+window.setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+window.setInterval(updateRuntimeDisplays, 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { updateRuntimeDisplays(); refresh(); } });
+
+function updateRuntimeDisplays() {
+  if (!latestPayload) return;
+  els.backendUptime.textContent = formatUptime(latestPayload.backendStartedAt, 'running').replace('运行', '后端已运行');
+  for (const card of els.list.querySelectorAll('.card')) {
+    const text = formatUptime(card.dataset.startedAt, card.dataset.status);
+    card.querySelector('.project-uptime').textContent = text;
+    card.querySelector('.project-uptime-detail').textContent = text;
+  }
+}
 
 window.addEventListener('unhandledrejection', (event) => { showBatchMessage(`操作失败：${String(event.reason?.message || event.reason)}`); event.preventDefault(); });
 

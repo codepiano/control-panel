@@ -41,7 +41,9 @@ Backend uptime is visible at the bottom of the sidebar to make backend restarts 
 - Selecting the current list affects only currently visible rows; hidden selections persist.
 - Batch launch results distinguish executed commands, skipped services and failures.
 - Dialogs have names, form labels, Escape dismissal, keyboard focus trapping and focus restoration.
-- Periodic status refresh preserves open service menus and expanded details.
+- The backend checks status every 30 seconds and shares cached snapshots across clients.
+  Operations and manual refresh update immediately. Frontend uptime ticks every second;
+  unchanged snapshots do not rebuild rows, preserving keyboard focus, menus and details.
 - At narrow widths the sidebar becomes a toggleable navigation panel; service actions and
   runtime information reflow below the identity. No essential functionality depends on hover.
 

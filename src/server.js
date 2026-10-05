@@ -51,6 +51,7 @@ async function createServer({ autoStart = true } = {}) {
       res.end(fs.readFileSync(path.join(__dirname, '..', file[0])));
     } catch (error) { reply(400, { error: String(error.message || error) }); }
   });
+  server.on('close', core.shutdown);
   return server;
 }
 

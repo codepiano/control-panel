@@ -2,6 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { createSnapshotCache } = require('./snapshot-cache');
+const STATUS_REFRESH_MS = 30000;
+const dashboardCache = createSnapshotCache(collectDashboardSnapshot, { ttlMs: STATUS_REFRESH_MS });
+let statusRefreshTimer = null;
 const APP_ROOT = path.resolve(__dirname, '..');
 const USER_DATA = process.env.CONTROL_PANEL_DATA || path.join(os.homedir(), 'Library', 'Application Support', 'control-panel');
 const BACKEND_STARTED_AT = new Date(Date.now() - process.uptime() * 1000).toISOString();
@@ -31,7 +35,6 @@ const LOGIN_ITEM_SCRIPTS = {
 };
 let projectsCache = [];
 let projectState = {};
-let refreshInFlight = null;
 let currentConfig = defaultConfig();
 const startingProjects = new Set();
 const stoppingProjects = new Set();
@@ -892,7 +895,6 @@ async function getProjectStatus(project) {
   }
 
   return {
-    status: 'stopped',
     status: state.status === 'error' ? 'error' : 'stopped',
     pid: state.pid || null,
     details: state.lastOutput || '',
@@ -932,35 +934,27 @@ async function collectProjectsSnapshot() {
   };
 }
 
-async function refreshAll() {
-  if (refreshInFlight) {
-    return refreshInFlight;
-  }
+async function collectDashboardSnapshot() {
+  const { config, projects } = await collectProjectsSnapshot();
+  const loginItem = await getLoginItemStatus();
+  return {
+    config,
+    projects,
+    scanReport,
+    backendStartedAt: BACKEND_STARTED_AT,
+    backendPid: process.pid,
+    statusRefreshMs: STATUS_REFRESH_MS,
+    snapshotId: crypto.randomUUID(),
+    configPath: getConfigPath(),
+    statePath: getStatePath(),
+    updatedAt: new Date().toISOString(),
+    openAtLogin: loginItem.enabled,
+    loginItemStatus: loginItem,
+  };
+}
 
-  refreshInFlight = (async () => {
-    const { config, projects } = await collectProjectsSnapshot();
-    const loginItem = await getLoginItemStatus();
-    const payload = {
-      config,
-      projects,
-      scanReport,
-      backendStartedAt: BACKEND_STARTED_AT,
-      backendPid: process.pid,
-      configPath: getConfigPath(),
-      statePath: getStatePath(),
-      updatedAt: new Date().toISOString(),
-      openAtLogin: loginItem.enabled,
-      loginItemStatus: loginItem,
-    };
-
-    return payload;
-  })();
-
-  try {
-    return await refreshInFlight;
-  } finally {
-    refreshInFlight = null;
-  }
+async function refreshAll({ force = true } = {}) {
+  return dashboardCache.get({ force });
 }
 
 function findProjectByKey(projectKey) {
@@ -1393,7 +1387,7 @@ async function startConfiguredProjects() {
 
 function registerActions() {
   registerAction('get-dashboard-data', async () => {
-    const payload = await refreshAll();
+    const payload = await refreshAll({ force: false });
     return payload;
   });
 
@@ -1493,7 +1487,9 @@ function registerActions() {
   });
 
   registerAction('set-open-at-login', async (enable) => {
-    return toggleAutoLaunch(Boolean(enable));
+    const result = await toggleAutoLaunch(Boolean(enable));
+    await refreshAll();
+    return result;
   });
 
   registerAction('set-project-start-on-panel-launch', async (projectKey, enable) => {
@@ -1516,10 +1512,16 @@ async function initialize({ autoStart = true } = {}) {
   registerActions();
   await refreshAll();
   if (autoStart) await startConfiguredProjects();
+  if (statusRefreshTimer) clearInterval(statusRefreshTimer);
+  statusRefreshTimer = setInterval(() => {
+    refreshAll().catch((error) => console.error('状态刷新失败：', error.message));
+  }, STATUS_REFRESH_MS);
+  statusRefreshTimer.unref();
 }
 
 module.exports = {
   initialize,
+  shutdown: () => { clearInterval(statusRefreshTimer); statusRefreshTimer = null; },
   invoke: async (action, args = []) => {
     const handler = actions.get(action);
     if (!handler) throw new Error('未知操作');
