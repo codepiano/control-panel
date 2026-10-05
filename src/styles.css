@@ -221,3 +221,14 @@ h1 { margin: 0; font-size: 30px; font-weight: 650; line-height: 1.25; letter-spa
 .repository-indicator { padding: 3px 5px; border: 1px solid #dce7d5; border-radius: 4px; background: #f4f8f0; color: var(--mint); font-size: 9px; }
 .repository-indicator.state-error, .repository-indicator.state-diverged { color: var(--coral); border-color: #efd6c9; }
 .repository-indicator.state-ahead, .repository-indicator.state-behind { color: var(--amber); }
+
+.repository-indicator.needs-attention, .repository-state.needs-attention {
+  color: #92510b; background: #fff1d6; border: 1px solid #edc482; font-weight: 600;
+}
+.repository-state.needs-attention { display: table; padding: 5px 8px; border-radius: 5px; }
+.repository-indicator.needs-attention.state-error, .repository-indicator.needs-attention.state-diverged,
+.repository-state.needs-attention.state-error, .repository-state.needs-attention.state-diverged {
+  color: #a2342c; background: #fff0ec; border-color: #e6b0a7;
+}
+#repositorySyncNav.needs-attention { background: #f3b95b18; color: #ffda9a; }
+#repositorySyncNav.needs-attention .nav-count { background: #ffd287; color: #563609; font-weight: 700; padding: 2px 6px; border-radius: 4px; }

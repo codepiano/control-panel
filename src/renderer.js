@@ -52,7 +52,7 @@ let batchInFlight = false;
 let latestPayload = null;
 let projectSearchQuery = '';
 let statusFilter = 'all';
-let projectSort = 'name';
+let projectSort = 'status';
 let refreshInFlight = false;
 let editingProject = null;
 let modalReturnFocus = null;
@@ -163,7 +163,7 @@ function projectMatchesSearch(project, query) {
 }
 
 function sortProjects(projects) {
-  const statusOrder = { error: 0, starting: 1, stopping: 2, running: 3, stopped: 4 };
+  const statusOrder = { running: 0, starting: 1, stopping: 2, error: 3, stopped: 4 };
   return [...projects].sort((left, right) => {
     if (projectSort === 'status') {
       const difference = (statusOrder[left.status] ?? 99) - (statusOrder[right.status] ?? 99);
@@ -559,8 +559,13 @@ function appendNodeContents(container, node, depth) {
   }
 }
 
+function nodeStatus(node) {
+  const statuses = new Set(matchingProjects(node).map((project) => project.status));
+  return ['running', 'starting', 'stopping', 'error', 'stopped'].find((status) => statuses.has(status)) || 'stopped';
+}
+
 function sortNodes(nodes) {
-  const ordered = sortProjects(nodes.map((node) => node.project || { key: node.key, name: node.name }));
+  const ordered = sortProjects(nodes.map((node) => ({ ...(node.project || { key: node.key, name: node.name }), ...(projectSort === 'status' ? { status: nodeStatus(node) } : {}) })));
   const positions = new Map(ordered.map((item, index) => [item.key, index]));
   return [...nodes].sort((a, b) => positions.get(a.key) - positions.get(b.key));
 }
@@ -639,11 +644,20 @@ function renderDashboard(data) {
   } else {
     const grouped = new Map();
     for (const project of buildProjectTree(allProjects, data.scanReport?.collections || [], projects.map((project) => project.key))) {
-      const title = project.project?.localGroup || (project.children.length || project.collection ? '项目与子服务' : '独立服务');
+      const groupName = project.project?.localGroup || (project.children.length || project.collection ? '项目与子服务' : '独立服务');
+      const title = projectSort === 'status' ? `${statusLabel(nodeStatus(project))} · ${groupName}` : groupName;
       if (!grouped.has(title)) grouped.set(title, []);
       grouped.get(title).push(project);
     }
-    for (const [title, items] of [...grouped].sort(([a], [b]) => a.localeCompare(b, 'zh-Hans-CN'))) appendProjectGroup(title, items);
+    const ranks = ['运行中', '启动中', '停止中', '错误', '已停止'];
+    const groups = [...grouped].sort(([a], [b]) => {
+      if (projectSort === 'status') {
+        const difference = ranks.indexOf(a.split(' · ')[0]) - ranks.indexOf(b.split(' · ')[0]);
+        if (difference) return difference;
+      }
+      return a.localeCompare(b, 'zh-Hans-CN');
+    });
+    for (const [title, items] of groups) appendProjectGroup(title, items);
   }
 
   els.scanDepth.value = String(data.config?.scan?.maxDepth ?? 1);
@@ -976,6 +990,7 @@ function renderRepositorySync(payload) {
   const repositories = payload.repositories || [];
   const pending = repositories.filter((repo) => repo.ahead || repo.behind || repo.dirty || ['error', 'untracked', 'detached'].includes(repo.status)).length;
   repoEls.repositoryPendingCount.textContent = String(pending);
+  repoEls.repositorySyncNav.classList.toggle('needs-attention', pending > 0);
   for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = payload.busy;
   repoEls.checkRepositoriesBtn.textContent = payload.busy ? '仓库处理中…' : '检查仓库同步';
   repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
@@ -991,7 +1006,8 @@ function renderRepositorySync(payload) {
     const branch = document.createElement('span'); branch.className = 'repository-branch'; branch.textContent = repo.branch ? `${repo.branch} → ${repo.upstream || '未配置跟踪分支'}` : '等待检查分支';
     const directory = document.createElement('p'); directory.className = 'repository-directory'; directory.textContent = repo.directory;
     const status = document.createElement('p'); status.className = `repository-state state-${repo.status}`;
-    status.textContent = `${repositoryLabels[repo.status] || repo.status}${repo.ahead ? ` ↑${repo.ahead}` : ''}${repo.behind ? ` ↓${repo.behind}` : ''}${repo.dirty ? ` · 未提交 ${repo.dirty} 项` : ''}${repo.inProgress ? ' · Git 操作进行中' : ''}`;
+    status.classList.toggle('needs-attention', repositoryNeedsAttention(repo));
+    status.textContent = repositoryStatusText(repo);
     const checked = document.createElement('p'); checked.className = 'field-help'; checked.textContent = `最后检查：${formatTimestamp(repo.checkedAt)}`;
     info.append(name, branch, directory, status, checked);
     if (repo.error) { const error = document.createElement('p'); error.className = 'form-error'; error.textContent = repo.error; info.appendChild(error); }
@@ -1044,10 +1060,22 @@ function updateRepositoryIndicators() {
     const repo = lookup.get(card.dataset.key);
     if (!repo) continue;
     const badge = document.createElement('button'); badge.className = `repository-indicator state-${repo.status}`;
-    badge.textContent = `${repositoryLabels[repo.status] || repo.status}${repo.ahead ? ` ↑${repo.ahead}` : ''}${repo.behind ? ` ↓${repo.behind}` : ''}${repo.dirty ? ' · 未提交' : ''}`;
+    badge.classList.toggle('needs-attention', repositoryNeedsAttention(repo));
+    badge.textContent = repositoryStatusText(repo);
     badge.setAttribute('aria-label', `查看 ${repo.name} 仓库同步状态`);
     badge.title = `最后检查：${formatTimestamp(repo.checkedAt)}`;
     badge.addEventListener('click', () => { openRepositorySync(); repoEls.repositoryList.querySelector(`[data-repo-key="${repo.key}"]`)?.scrollIntoView({ block: 'center' }); });
     card.querySelector('.project-labels').appendChild(badge);
   }
+}
+
+function repositoryNeedsAttention(repo) {
+  return Boolean(repo.dirty || repo.ahead || repo.behind || repo.inProgress || ['error', 'diverged', 'untracked', 'detached'].includes(repo.status));
+}
+function repositoryStatusText(repo) {
+  const parts = [];
+  if (!(repo.status === 'synced' && repo.dirty)) parts.push(`${repositoryLabels[repo.status] || repo.status}${repo.ahead ? ` ↑${repo.ahead}` : ''}${repo.behind ? ` ↓${repo.behind}` : ''}`);
+  if (repo.dirty) parts.push(`未提交 ${repo.dirty} 项`);
+  if (repo.inProgress) parts.push('Git 操作进行中');
+  return `${repositoryNeedsAttention(repo) ? '⚠ ' : ''}${parts.join(' · ')}`;
 }
