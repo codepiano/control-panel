@@ -14,6 +14,19 @@ async function invoke(action, ...args) {
   return result.data;
 }
 window.controlPanel = {
+  restartPanel: () => invoke('restart-panel'),
+  waitForPanelRestart: async (previousPid) => {
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      try {
+        const response = await fetch('/health', { signal: AbortSignal.timeout(3000) });
+        const health = await response.json();
+        if (response.ok && health.pid !== previousPid) { sessionToken = ''; return; }
+      } catch {}
+    }
+    throw new Error('60 秒内未恢复连接，请查看控制面板启动日志');
+  },
   getRepositorySync: () => invoke('get-repository-sync'),
   checkRepositories: (keys) => keys === undefined ? invoke('check-repositories') : invoke('check-repositories', keys),
   syncRepositories: (kind, keys) => keys === undefined ? invoke('sync-repositories', kind) : invoke('sync-repositories', kind, keys),

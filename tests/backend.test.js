@@ -105,6 +105,11 @@ test('web API serves the browser and enforces session, host, origin and static a
   const { token } = await (await fetch(`${base}/api/session`)).json();
   const post = (headers = {}, action = 'get-dashboard-data', body = JSON.stringify({ args: [] })) => fetch(`${base}/api/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body });
   assert.equal((await post()).status, 403);
+  assert.equal((await post({}, 'restart-panel')).status, 403);
+  assert.equal((await post({ 'X-Control-Panel-Token': token, Origin: 'https://example.com' }, 'restart-panel')).status, 403);
+  const unmanagedRestart = await post({ 'X-Control-Panel-Token': token }, 'restart-panel');
+  assert.equal(unmanagedRestart.status, 400);
+  assert.match((await unmanagedRestart.json()).error, /启动脚本管理|启动进程身份不匹配/);
   assert.equal((await post({ 'X-Control-Panel-Token': token, Origin: 'https://example.com' })).status, 403);
   const rejectedHost = await new Promise((resolve, reject) => {
     const request = require('node:http').get(`${base}/api/session`, { headers: { Host: 'attacker.example' } }, (response) => { response.resume(); resolve(response.statusCode); });

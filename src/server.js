@@ -3,9 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const core = require('./backend');
+const { preparePanelRestart } = require('./panel-restart');
 
 async function createServer({ autoStart = true } = {}) {
   await core.initialize({ autoStart });
+  let restartPending = false;
   const token = crypto.randomBytes(32).toString('hex');
   const files = new Map([
     ['/', ['src/index.html', 'text/html; charset=utf-8']],
@@ -45,6 +47,16 @@ async function createServer({ autoStart = true } = {}) {
         }
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         if (!Array.isArray(body.args)) { reply(400, { error: '参数应为数组' }); return; }
+        if (url.pathname === '/api/restart-panel') {
+          if (restartPending) throw new Error('控制面板正在重启，请等待');
+          restartPending = true;
+          let restart;
+          try { restart = await preparePanelRestart({ root: path.resolve(__dirname, '..'), port: server.address().port }); }
+          catch (error) { restartPending = false; throw error; }
+          res.once('finish', () => restart.commit());
+          res.once('close', () => { if (!res.writableFinished) { restart.cancel(); restartPending = false; } });
+          reply(200, { data: { pid: process.pid } }); return;
+        }
         const data = await core.invoke(url.pathname.slice(5), body.args);
         reply(200, { data }); return;
       }

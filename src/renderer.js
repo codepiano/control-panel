@@ -8,7 +8,7 @@ const els = {
   runningMetric: document.getElementById('runningMetric'),
   autoStartMetric: document.getElementById('autoStartMetric'),
   attentionMetric: document.getElementById('attentionMetric'),
-  updatedAtCompact: document.getElementById('updatedAtCompact'),
+  refreshIndicator: document.getElementById('refreshIndicator'),
   rootsCount: document.getElementById('rootsCount'),
   configPath: document.getElementById('configPath'),
   statePath: document.getElementById('statePath'),
@@ -432,8 +432,8 @@ function renderProject(project) {
 
   restartBtn.addEventListener('click', async () => {
     restartBtn.disabled = true;
-    await api.restartProject(project.key);
-    await refresh();
+    if (project.isPanel) await restartPanel();
+    else { await api.restartProject(project.key); await refresh(); }
   });
 
   homepageBtn.addEventListener('click', async () => {
@@ -488,7 +488,7 @@ function renderProject(project) {
   card.dataset.status = project.status;
   projectMenu.open = openProjectMenus.has(project.key);
   if (expandedProjectKeys.has(project.key)) { details.classList.remove('hidden'); detailToggle.textContent = '收起详情'; }
-  if (project.isPanel) { primaryAction.disabled = true; restartBtn.disabled = true; primaryAction.title = '后端自身请通过 scripts/stop.sh 或 restart.sh 管理'; }
+  if (project.isPanel) { primaryAction.disabled = true; restartBtn.disabled = panelRestartInFlight; restartBtn.title = '重启控制面板后端，页面会自动重新连接'; primaryAction.title = '后端自身请通过 scripts/stop.sh 管理'; }
   return fragment;
 }
 
@@ -624,7 +624,7 @@ function renderDashboard(data) {
   els.configPath.textContent = data.configPath || '-';
   els.statePath.textContent = data.statePath || '-';
   els.updatedAt.textContent = formatTimestamp(data.updatedAt);
-  els.updatedAtCompact.textContent = `最后刷新 ${formatTimestamp(data.updatedAt)}`;
+  setRefreshIndicator(true);
   els.loginToggle.checked = Boolean(data.openAtLogin);
   const loginItemStatus = data.loginItemStatus || {};
   if (loginItemStatus.status === 'enabled') {
@@ -671,43 +671,60 @@ function renderDashboard(data) {
   updateRepositoryIndicators();
 }
 
+function setRefreshIndicator(healthy, detail = '') {
+  const label = healthy ? '状态更新正常' : `状态更新失败${detail ? `：${detail}` : ''}`;
+  els.refreshIndicator.dataset.state = healthy ? 'healthy' : 'error';
+  els.refreshIndicator.setAttribute('aria-label', label);
+  els.refreshIndicator.title = label;
+}
+
+let panelRestartInFlight = false;
+async function restartPanel() {
+  if (panelRestartInFlight) return;
+  panelRestartInFlight = true;
+  showBatchMessage('控制面板正在重启，页面将自动重新连接…');
+  try {
+    const { pid } = await api.restartPanel();
+    els.refreshIndicator.dataset.state = 'pending';
+    els.refreshIndicator.title = '控制面板正在重启';
+    els.refreshIndicator.setAttribute('aria-label', '控制面板正在重启');
+    await api.waitForPanelRestart(pid);
+    panelRestartInFlight = false;
+    await refresh();
+    await readRepositorySync();
+    showBatchMessage('控制面板已重启，连接已恢复。');
+  } catch (error) {
+    panelRestartInFlight = false;
+    if (latestPayload) renderDashboard(latestPayload);
+    setRefreshIndicator(false, error.message);
+    showBatchMessage(`控制面板重启失败：${error.message}`);
+  } finally { panelRestartInFlight = false; }
+}
+
 async function refresh() {
-  if (refreshInFlight) {
-    return;
-  }
-
+  if (panelRestartInFlight) return;
+  if (refreshInFlight) return;
   refreshInFlight = true;
-  const defaultLabel = '刷新';
-  els.refreshBtn.disabled = true;
-  els.refreshBtn.textContent = '刷新中...';
-
   try {
     const data = await api.getDashboardData();
     if (!latestPayload || (latestPayload.snapshotId || latestPayload.updatedAt) !== (data.snapshotId || data.updatedAt) || els.backendStatus.textContent !== '本机后端已连接') renderDashboard(data);
     else updateRuntimeDisplays();
+    setRefreshIndicator(true);
   } catch (error) {
     const message = String(error?.message || error || '未知错误');
     els.runningSummary.textContent = `刷新失败：${message}`;
     els.backendStatus.textContent = '后端连接失败';
-    els.refreshBtn.textContent = '刷新失败';
-    els.refreshBtn.title = message;
-    window.setTimeout(() => {
-      if (!refreshInFlight) {
-        els.refreshBtn.textContent = defaultLabel;
-        els.refreshBtn.title = '';
-      }
-    }, 2500);
+    setRefreshIndicator(false, message);
   } finally {
     refreshInFlight = false;
-    els.refreshBtn.disabled = false;
-    if (els.refreshBtn.textContent === '刷新中...') {
-      els.refreshBtn.textContent = defaultLabel;
-    }
   }
 }
 
 els.refreshBtn.addEventListener('click', async () => {
-  try { await api.refreshProjects(); await refresh(); } catch (error) { showBatchMessage(`刷新失败：${error.message}`); }
+  els.refreshBtn.disabled = true;
+  try { await api.refreshProjects(); await refresh(); }
+  catch (error) { setRefreshIndicator(false, error.message); showBatchMessage(`刷新失败：${error.message}`); }
+  finally { els.refreshBtn.disabled = false; }
 });
 els.projectSearch.addEventListener('input', (event) => {
   projectSearchQuery = event.target.value;
@@ -972,11 +989,14 @@ els.sidebarCloseBtn.addEventListener('click', closeMobileNavigation);
 els.navToggleBtn.addEventListener('click', () => { const open = els.appLayout.classList.toggle('sidebar-open'); els.navToggleBtn.setAttribute('aria-expanded', String(open)); });
 
 
-const repoEls = Object.fromEntries(['repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults'].map((id) => [id, document.getElementById(id)]));
+const repoEls = Object.fromEntries(['repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults', 'repositoryAttentionBtn', 'repositoryAllBtn'].map((id) => [id, document.getElementById(id)]));
 let repositoryPayload = null;
+let repositoryView = 'attention';
 let repositoryPoll = null;
 let repositoryReadInFlight = false;
-function openRepositorySync() {
+function openRepositorySync(view = 'attention') {
+  repositoryView = view;
+  if (repositoryPayload) renderRepositorySync(repositoryPayload);
   rememberModalFocus(); repoEls.repositorySyncModal.classList.remove('hidden'); repoEls.repositorySyncModal.setAttribute('aria-hidden', 'false');
   repoEls.closeRepositorySyncBtn.focus(); readRepositorySync();
 }
@@ -988,13 +1008,17 @@ function renderRepositorySync(payload) {
   repositoryPayload = payload;
   updateRepositoryIndicators();
   const repositories = payload.repositories || [];
-  const pending = repositories.filter((repo) => repo.ahead || repo.behind || repo.dirty || ['error', 'untracked', 'detached'].includes(repo.status)).length;
+  const pending = repositories.filter(repositoryNeedsAttention).length;
   repoEls.repositoryPendingCount.textContent = String(pending);
   repoEls.repositorySyncNav.classList.toggle('needs-attention', pending > 0);
   for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = payload.busy;
   repoEls.checkRepositoriesBtn.textContent = payload.busy ? '仓库处理中…' : '检查仓库同步';
   repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
   repoEls.repositorySchedule.textContent = `下次计划：${formatTimestamp(payload.nextCheckAt)}（本机时区） · 检查失败 15 分钟后重试 · 同一仓库只检查一次`;
+  repoEls.repositoryAttentionBtn.textContent = `需要处理 ${pending}`;
+  repoEls.repositoryAllBtn.textContent = `全部仓库 ${repositories.length}`;
+  repoEls.repositoryAttentionBtn.setAttribute('aria-pressed', String(repositoryView === 'attention'));
+  repoEls.repositoryAllBtn.setAttribute('aria-pressed', String(repositoryView === 'all'));
   repoEls.repositoryList.replaceChildren();
   const byService = new Map(repositories.flatMap((repo) => repo.services.map((service) => [service.key, repo.key])));
   const parentKeys = new Map(repositories.map((repo) => [repo.key, repo.services.flatMap((service) => service.ancestors || []).map((ancestor) => byService.get(ancestor.key)).reverse().find((key) => key && key !== repo.key)]));
@@ -1009,7 +1033,11 @@ function renderRepositorySync(payload) {
     status.classList.toggle('needs-attention', repositoryNeedsAttention(repo));
     status.textContent = repositoryStatusText(repo);
     const checked = document.createElement('p'); checked.className = 'field-help'; checked.textContent = `最后检查：${formatTimestamp(repo.checkedAt)}`;
-    info.append(name, branch, directory, status, checked);
+    info.append(name, branch, directory, status);
+    if (repositoryNeedsAttention(repo)) {
+      const guidance = document.createElement('p'); guidance.className = 'repository-guidance'; guidance.textContent = repositoryActionGuidance(repo); info.appendChild(guidance);
+    }
+    info.appendChild(checked);
     if (repo.error) { const error = document.createElement('p'); error.className = 'form-error'; error.textContent = repo.error; info.appendChild(error); }
     const buttons = document.createElement('div'); buttons.className = 'repository-actions';
     for (const [kind, label] of [['check', '检查'], ['pull', '拉取'], ['push', '推送']]) {
@@ -1018,9 +1046,11 @@ function renderRepositorySync(payload) {
       button.addEventListener('click', () => runRepositoryAction(kind, [repo.key])); buttons.appendChild(button);
     }
     row.append(info, buttons); repoEls.repositoryList.appendChild(row);
-    for (const child of repositories.filter((candidate) => parentKeys.get(candidate.key) === repo.key)) renderRepo(child, depth + 1);
+    if (repositoryView === 'all') for (const child of repositories.filter((candidate) => parentKeys.get(candidate.key) === repo.key)) renderRepo(child, depth + 1);
   };
-  repositories.filter((repo) => !parentKeys.get(repo.key)).forEach((repo) => renderRepo(repo));
+  const displayed = repositoryView === 'attention' ? repositories.filter(repositoryNeedsAttention) : repositories.filter((repo) => !parentKeys.get(repo.key));
+  displayed.forEach((repo) => renderRepo(repo));
+  if (repositories.length && !displayed.length) { const empty = document.createElement('p'); empty.className = 'repository-empty'; empty.textContent = '目前没有需要处理的仓库。'; repoEls.repositoryList.appendChild(empty); }
   if (!repositories.length) { const empty = document.createElement('p'); empty.className = 'field-help'; empty.textContent = '当前项目中没有可识别的 Git 仓库。'; repoEls.repositoryList.appendChild(empty); }
   repoEls.repositoryResults.replaceChildren();
   for (const result of payload.results || []) {
@@ -1029,7 +1059,7 @@ function renderRepositorySync(payload) {
   }
 }
 async function readRepositorySync() {
-  if (repositoryReadInFlight || document.hidden) return;
+  if (repositoryReadInFlight || panelRestartInFlight || document.hidden) return;
   repositoryReadInFlight = true;
   try { renderRepositorySync(await api.getRepositorySync()); }
   catch (error) { repoEls.repositorySyncStatus.textContent = error.message; }
@@ -1042,7 +1072,10 @@ async function runRepositoryAction(kind, keys) {
   catch (error) { repoEls.repositorySyncStatus.textContent = error.message; for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = false; }
   clearTimeout(repositoryPoll); repositoryPoll = setTimeout(readRepositorySync, 1000);
 }
-repoEls.repositorySyncNav.addEventListener('click', openRepositorySync);
+repoEls.repositorySyncNav.addEventListener('click', () => openRepositorySync());
+for (const [button, view] of [[repoEls.repositoryAttentionBtn, 'attention'], [repoEls.repositoryAllBtn, 'all']]) {
+  button.addEventListener('click', () => { repositoryView = view; if (repositoryPayload) renderRepositorySync(repositoryPayload); });
+}
 repoEls.closeRepositorySyncBtn.addEventListener('click', closeRepositorySync);
 repoEls.checkRepositoriesBtn.addEventListener('click', () => { openRepositorySync(); runRepositoryAction('check'); });
 repoEls.checkAllRepositoriesBtn.addEventListener('click', () => runRepositoryAction('check'));
@@ -1064,7 +1097,7 @@ function updateRepositoryIndicators() {
     badge.textContent = repositoryStatusText(repo);
     badge.setAttribute('aria-label', `查看 ${repo.name} 仓库同步状态`);
     badge.title = `最后检查：${formatTimestamp(repo.checkedAt)}`;
-    badge.addEventListener('click', () => { openRepositorySync(); repoEls.repositoryList.querySelector(`[data-repo-key="${repo.key}"]`)?.scrollIntoView({ block: 'center' }); });
+    badge.addEventListener('click', () => { openRepositorySync('all'); repoEls.repositoryList.querySelector(`[data-repo-key="${repo.key}"]`)?.scrollIntoView({ block: 'center' }); });
     card.querySelector('.project-labels').appendChild(badge);
   }
 }
@@ -1078,4 +1111,17 @@ function repositoryStatusText(repo) {
   if (repo.dirty) parts.push(`未提交 ${repo.dirty} 项`);
   if (repo.inProgress) parts.push('Git 操作进行中');
   return `${repositoryNeedsAttention(repo) ? '⚠ ' : ''}${parts.join(' · ')}`;
+}
+
+function repositoryActionGuidance(repo) {
+  const actions = [];
+  if (repo.error || repo.status === 'error') actions.push('检查失败：查看下方原因，处理后重新检查');
+  if (repo.inProgress) actions.push('先在项目中完成或取消正在进行的 Git 操作');
+  if (repo.dirty) actions.push(`先在项目中检查并提交或暂存 ${repo.dirty} 项改动，再进行同步`);
+  if (repo.status === 'detached') actions.push('先切换到需要同步的本地分支');
+  else if (repo.status === 'untracked') actions.push('先为当前分支配置远端跟踪分支');
+  else if (repo.status === 'diverged' || (repo.ahead && repo.behind)) actions.push(`本地 ${repo.ahead} 个、远端 ${repo.behind} 个提交：先在项目中合并或变基，解决冲突后再推送`);
+  else if (repo.behind) actions.push(`远端有 ${repo.behind} 个新提交：${repo.dirty || repo.inProgress || repo.error ? '处理上述问题后再拉取' : '点击「拉取」更新本机代码'}`);
+  else if (repo.ahead) actions.push(`本地有 ${repo.ahead} 个未推送提交：${repo.dirty || repo.inProgress || repo.error ? '处理上述问题后再推送' : '点击「推送」上传到远端'}`);
+  return actions.join('；');
 }
