@@ -3,6 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 const { createSnapshotCache } = require('./snapshot-cache');
+const { createGitSync } = require('./git-sync');
+let gitSync = null;
 const STATUS_REFRESH_MS = 30000;
 const dashboardCache = createSnapshotCache(collectDashboardSnapshot, { ttlMs: STATUS_REFRESH_MS });
 let statusRefreshTimer = null;
@@ -1386,6 +1388,12 @@ async function startConfiguredProjects() {
 }
 
 function registerActions() {
+  registerAction('get-repository-sync', () => gitSync.snapshot());
+  registerAction('check-repositories', (keys) => gitSync.request('check', keys));
+  registerAction('sync-repositories', (kind, keys) => {
+    if (!['pull', 'push'].includes(kind)) throw new Error('只支持拉取或推送');
+    return gitSync.request(kind, keys);
+  });
   registerAction('get-dashboard-data', async () => {
     const payload = await refreshAll({ force: false });
     return payload;
@@ -1512,6 +1520,10 @@ async function initialize({ autoStart = true } = {}) {
   registerActions();
   await refreshAll();
   if (autoStart) await startConfiguredProjects();
+  if (gitSync) gitSync.stop();
+  gitSync = createGitSync({ statePath: path.join(USER_DATA, 'repository-sync.json'), getProjects: () => [...projectsCache, ...(scanReport.collections || [])] });
+  await gitSync.discover();
+  if (autoStart) gitSync.start();
   if (statusRefreshTimer) clearInterval(statusRefreshTimer);
   statusRefreshTimer = setInterval(() => {
     refreshAll().catch((error) => console.error('状态刷新失败：', error.message));
@@ -1521,7 +1533,7 @@ async function initialize({ autoStart = true } = {}) {
 
 module.exports = {
   initialize,
-  shutdown: () => { clearInterval(statusRefreshTimer); statusRefreshTimer = null; },
+  shutdown: () => { clearInterval(statusRefreshTimer); statusRefreshTimer = null; gitSync?.stop(); },
   invoke: async (action, args = []) => {
     const handler = actions.get(action);
     if (!handler) throw new Error('未知操作');

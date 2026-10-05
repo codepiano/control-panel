@@ -14,6 +14,9 @@ async function invoke(action, ...args) {
   return result.data;
 }
 window.controlPanel = {
+  getRepositorySync: () => invoke('get-repository-sync'),
+  checkRepositories: (keys) => keys === undefined ? invoke('check-repositories') : invoke('check-repositories', keys),
+  syncRepositories: (kind, keys) => keys === undefined ? invoke('sync-repositories', kind) : invoke('sync-repositories', kind, keys),
   getDashboardData: () => invoke('get-dashboard-data'),
   startProject: (key) => invoke('start-project', key),
   stopProject: (key) => invoke('stop-project', key),

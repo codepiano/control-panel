@@ -654,6 +654,7 @@ function renderDashboard(data) {
   }
   updateSelection();
   renderRoots(data.config);
+  updateRepositoryIndicators();
 }
 
 async function refresh() {
@@ -745,7 +746,7 @@ els.projectEditorForm.addEventListener('submit', async (event) => {
   }
 });
 window.addEventListener('keydown', (event) => {
-  const activeModal = !els.organizationModal.classList.contains('hidden') ? els.organizationModal : !els.projectEditorModal.classList.contains('hidden')
+  const activeModal = !document.getElementById('repositorySyncModal').classList.contains('hidden') ? document.getElementById('repositorySyncModal') : !els.organizationModal.classList.contains('hidden') ? els.organizationModal : !els.projectEditorModal.classList.contains('hidden')
     ? els.projectEditorModal
     : !els.settingsModal.classList.contains('hidden')
       ? els.settingsModal
@@ -755,7 +756,8 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Escape') {
-    if (!els.organizationModal.classList.contains('hidden')) { closeOrganization(); }
+    if (!document.getElementById('repositorySyncModal').classList.contains('hidden')) { closeRepositorySync(); }
+    else if (!els.organizationModal.classList.contains('hidden')) { closeOrganization(); }
     else if (!els.projectEditorModal.classList.contains('hidden')) {
       closeProjectEditor();
     } else if (!els.settingsModal.classList.contains('hidden')) {
@@ -954,3 +956,98 @@ els.navRunningBtn.addEventListener('click', () => selectView('running'));
 els.navFavoritesBtn.addEventListener('click', () => selectView('favorites'));
 els.sidebarCloseBtn.addEventListener('click', closeMobileNavigation);
 els.navToggleBtn.addEventListener('click', () => { const open = els.appLayout.classList.toggle('sidebar-open'); els.navToggleBtn.setAttribute('aria-expanded', String(open)); });
+
+
+const repoEls = Object.fromEntries(['repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults'].map((id) => [id, document.getElementById(id)]));
+let repositoryPayload = null;
+let repositoryPoll = null;
+let repositoryReadInFlight = false;
+function openRepositorySync() {
+  rememberModalFocus(); repoEls.repositorySyncModal.classList.remove('hidden'); repoEls.repositorySyncModal.setAttribute('aria-hidden', 'false');
+  repoEls.closeRepositorySyncBtn.focus(); readRepositorySync();
+}
+function closeRepositorySync() {
+  repoEls.repositorySyncModal.classList.add('hidden'); repoEls.repositorySyncModal.setAttribute('aria-hidden', 'true'); restoreModalFocus();
+}
+const repositoryLabels = { unchecked: '尚未检查', synced: '已同步', ahead: '待推送', behind: '待拉取', diverged: '已分叉', untracked: '无跟踪分支', detached: '游离分支', error: '检查失败' };
+function renderRepositorySync(payload) {
+  repositoryPayload = payload;
+  updateRepositoryIndicators();
+  const repositories = payload.repositories || [];
+  const pending = repositories.filter((repo) => repo.ahead || repo.behind || repo.dirty || ['error', 'untracked', 'detached'].includes(repo.status)).length;
+  repoEls.repositoryPendingCount.textContent = String(pending);
+  for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = payload.busy;
+  repoEls.checkRepositoriesBtn.textContent = payload.busy ? '仓库处理中…' : '检查仓库同步';
+  repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
+  repoEls.repositorySchedule.textContent = `下次计划：${formatTimestamp(payload.nextCheckAt)}（本机时区） · 检查失败 15 分钟后重试 · 同一仓库只检查一次`;
+  repoEls.repositoryList.replaceChildren();
+  const byService = new Map(repositories.flatMap((repo) => repo.services.map((service) => [service.key, repo.key])));
+  const parentKeys = new Map(repositories.map((repo) => [repo.key, repo.services.flatMap((service) => service.ancestors || []).map((ancestor) => byService.get(ancestor.key)).reverse().find((key) => key && key !== repo.key)]));
+  const renderRepo = (repo, depth = 0) => {
+    const row = document.createElement('section'); row.className = 'repository-row'; row.dataset.repoKey = repo.key;
+    row.style.setProperty('--repository-depth', Math.min(depth, 5));
+    const info = document.createElement('div'); info.className = 'repository-info';
+    const name = document.createElement('h3'); name.textContent = repo.name;
+    const branch = document.createElement('span'); branch.className = 'repository-branch'; branch.textContent = repo.branch ? `${repo.branch} → ${repo.upstream || '未配置跟踪分支'}` : '等待检查分支';
+    const directory = document.createElement('p'); directory.className = 'repository-directory'; directory.textContent = repo.directory;
+    const status = document.createElement('p'); status.className = `repository-state state-${repo.status}`;
+    status.textContent = `${repositoryLabels[repo.status] || repo.status}${repo.ahead ? ` ↑${repo.ahead}` : ''}${repo.behind ? ` ↓${repo.behind}` : ''}${repo.dirty ? ` · 未提交 ${repo.dirty} 项` : ''}${repo.inProgress ? ' · Git 操作进行中' : ''}`;
+    const checked = document.createElement('p'); checked.className = 'field-help'; checked.textContent = `最后检查：${formatTimestamp(repo.checkedAt)}`;
+    info.append(name, branch, directory, status, checked);
+    if (repo.error) { const error = document.createElement('p'); error.className = 'form-error'; error.textContent = repo.error; info.appendChild(error); }
+    const buttons = document.createElement('div'); buttons.className = 'repository-actions';
+    for (const [kind, label] of [['check', '检查'], ['pull', '拉取'], ['push', '推送']]) {
+      const button = document.createElement('button'); button.className = 'button secondary'; button.textContent = label;
+      button.disabled = payload.busy || (kind !== 'check' && (repo.status === 'unchecked' || !!repo.error || !!repo.dirty || !!repo.inProgress || repo.status === 'diverged' || !(kind === 'push' ? repo.ahead && !repo.behind : repo.behind && !repo.ahead)));
+      button.addEventListener('click', () => runRepositoryAction(kind, [repo.key])); buttons.appendChild(button);
+    }
+    row.append(info, buttons); repoEls.repositoryList.appendChild(row);
+    for (const child of repositories.filter((candidate) => parentKeys.get(candidate.key) === repo.key)) renderRepo(child, depth + 1);
+  };
+  repositories.filter((repo) => !parentKeys.get(repo.key)).forEach((repo) => renderRepo(repo));
+  if (!repositories.length) { const empty = document.createElement('p'); empty.className = 'field-help'; empty.textContent = '当前项目中没有可识别的 Git 仓库。'; repoEls.repositoryList.appendChild(empty); }
+  repoEls.repositoryResults.replaceChildren();
+  for (const result of payload.results || []) {
+    const line = document.createElement('p'); line.className = result.outcome === 'failed' ? 'form-error' : 'field-help';
+    line.textContent = `${result.name} · ${{ checked: '已检查', success: '成功', skipped: '跳过', failed: '失败' }[result.outcome]}：${result.detail}`; repoEls.repositoryResults.appendChild(line);
+  }
+}
+async function readRepositorySync() {
+  if (repositoryReadInFlight || document.hidden) return;
+  repositoryReadInFlight = true;
+  try { renderRepositorySync(await api.getRepositorySync()); }
+  catch (error) { repoEls.repositorySyncStatus.textContent = error.message; }
+  finally { repositoryReadInFlight = false; clearTimeout(repositoryPoll); repositoryPoll = setTimeout(readRepositorySync, repositoryPayload?.busy ? 2000 : 15000); }
+}
+async function runRepositoryAction(kind, keys) {
+  if (repositoryPayload?.busy) return;
+  for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = true;
+  try { renderRepositorySync(kind === 'check' ? await api.checkRepositories(keys) : await api.syncRepositories(kind, keys)); }
+  catch (error) { repoEls.repositorySyncStatus.textContent = error.message; for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn']) repoEls[id].disabled = false; }
+  clearTimeout(repositoryPoll); repositoryPoll = setTimeout(readRepositorySync, 1000);
+}
+repoEls.repositorySyncNav.addEventListener('click', openRepositorySync);
+repoEls.closeRepositorySyncBtn.addEventListener('click', closeRepositorySync);
+repoEls.checkRepositoriesBtn.addEventListener('click', () => { openRepositorySync(); runRepositoryAction('check'); });
+repoEls.checkAllRepositoriesBtn.addEventListener('click', () => runRepositoryAction('check'));
+repoEls.pullAllRepositoriesBtn.addEventListener('click', () => runRepositoryAction('pull'));
+repoEls.pushAllRepositoriesBtn.addEventListener('click', () => runRepositoryAction('push'));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) readRepositorySync(); });
+readRepositorySync();
+
+function updateRepositoryIndicators() {
+  if (!repositoryPayload) return;
+  const repositories = repositoryPayload.repositories || [];
+  const lookup = new Map(repositories.flatMap((repo) => repo.services.map((service) => [service.key, repo])));
+  for (const card of els.list.querySelectorAll('.card')) {
+    card.querySelector('.repository-indicator')?.remove();
+    const repo = lookup.get(card.dataset.key);
+    if (!repo) continue;
+    const badge = document.createElement('button'); badge.className = `repository-indicator state-${repo.status}`;
+    badge.textContent = `${repositoryLabels[repo.status] || repo.status}${repo.ahead ? ` ↑${repo.ahead}` : ''}${repo.behind ? ` ↓${repo.behind}` : ''}${repo.dirty ? ' · 未提交' : ''}`;
+    badge.setAttribute('aria-label', `查看 ${repo.name} 仓库同步状态`);
+    badge.title = `最后检查：${formatTimestamp(repo.checkedAt)}`;
+    badge.addEventListener('click', () => { openRepositorySync(); repoEls.repositoryList.querySelector(`[data-repo-key="${repo.key}"]`)?.scrollIntoView({ block: 'center' }); });
+    card.querySelector('.project-labels').appendChild(badge);
+  }
+}
