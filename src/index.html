@@ -18,7 +18,8 @@
         <button id="navRunningBtn" class="nav-item"><span>运行中</span><span id="runningNavCount" class="nav-count">0</span></button>
         <button id="navFavoritesBtn" class="nav-item"><span>星标服务</span><span id="favoriteNavCount" class="nav-count">0</span></button>
       </nav>
-      <div class="nav-section"><h2>工作区与分组</h2><div id="groupNav" class="scope-nav"></div></div>
+      <div class="nav-section"><h2>项目层级</h2><div id="projectNav" class="scope-nav project-nav"></div></div>
+      <div class="nav-section"><h2>个人分组</h2><div id="groupNav" class="scope-nav"></div></div>
       <div class="nav-section"><h2>标签</h2><div id="tagNav" class="tag-nav"></div></div>
       <div class="sidebar-bottom"><div class="backend-status"><span class="live-dot"></span><span id="backendStatus">本机后端已连接</span></div><span id="backendUptime" class="backend-uptime">正在读取运行时长</span><button id="configBtn" class="settings-nav">设置与发现入口 <span>↗</span></button></div>
     </aside>
@@ -68,6 +69,6 @@
     <div class="project-controls"><div class="card-actions"><button class="homepage-btn button subtle">打开</button><button class="primary-action button"></button><details class="project-menu"><summary aria-label="更多操作">•••</summary><div class="project-menu-list"><button class="organization-btn ghost" type="button">标记与分组</button><button class="favorite-btn ghost" type="button">星标</button><button class="detail-toggle ghost" type="button">查看详情</button><button class="restart-btn ghost">重新启动</button><button class="repository-btn ghost">打开仓库</button><button class="folder-btn ghost">在 Finder 中打开</button><button class="panel-start-btn ghost">随面板启动</button><button class="project-icon-btn ghost">上传自定义图标</button><button class="reset-project-icon-btn ghost">恢复项目图标</button><button class="project-config-btn ghost">编辑展示信息</button></div></details></div></div>
     <div class="project-details hidden"><div class="card-meta"><div class="meta-field"><span class="label">启动次数</span><span class="project-usage value"></span></div><div class="meta-field"><span class="label">最近启动</span><span class="project-last-started value"></span></div><div class="meta-field"><span class="label">运行时长</span><span class="project-uptime-detail value"></span></div><div class="meta-field"><span class="label">进程 ID</span><span class="project-pid-detail value"></span></div><div class="meta-field"><span class="label">图标来源</span><span class="project-icon-source value"></span></div><div class="meta-field"><span class="label">配置来源</span><span class="project-source value"></span></div><div class="meta-field"><span class="label">随面板启动</span><span class="project-panel-start value"></span></div><div class="meta-field"><span class="label">所属关系</span><span class="project-root value"></span></div><div class="meta-field"><span class="label">服务目录</span><span class="project-dir value"></span></div><div class="meta-field"><span class="label">最近输出</span><span class="project-output-detail value"></span></div></div></div>
   </section></template>
-  <script src="/client.js"></script><script src="/renderer.js"></script>
+  <script src="/client.js"></script><script src="/project-tree.js"></script><script src="/renderer.js"></script>
 </body>
 </html>

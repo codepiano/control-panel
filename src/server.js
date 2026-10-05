@@ -12,6 +12,7 @@ async function createServer({ autoStart = true } = {}) {
     ['/index.html', ['src/index.html', 'text/html; charset=utf-8']],
     ['/styles.css', ['src/styles.css', 'text/css; charset=utf-8']],
     ['/client.js', ['src/client.js', 'text/javascript; charset=utf-8']],
+    ['/project-tree.js', ['src/project-tree.js', 'text/javascript; charset=utf-8']],
     ['/renderer.js', ['src/renderer.js', 'text/javascript; charset=utf-8']],
     ['/assets/app-icon.png', ['assets/app-icon.png', 'image/png']],
   ]);
@@ -28,7 +29,9 @@ async function createServer({ autoStart = true } = {}) {
     }
     const url = new URL(req.url, origin);
     try {
-      if (req.method === 'GET' && url.pathname === '/health') { reply(200, { status: 'running', uptimeSec: Math.floor(process.uptime()) }); return; }
+      if (req.method === 'GET' && url.pathname === '/health') {
+        const dashboard = await core.invoke('get-dashboard-data');
+        reply(200, { status: 'running', pid: process.pid, launcherPid: process.ppid, uptimeSec: Math.floor(process.uptime()), services: dashboard.projects.length, running: dashboard.projects.filter((project) => project.status === 'running').length, issues: dashboard.scanReport.issues.length }); return; }
       if (req.method === 'GET' && url.pathname === '/api/session') { reply(200, { token }); return; }
       if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
         if (req.headers['x-control-panel-token'] !== token) { reply(403, { error: '会话已失效，请刷新页面' }); return; }
@@ -58,9 +61,10 @@ async function createServer({ autoStart = true } = {}) {
 if (require.main === module) {
   const port = Number(process.env.CONTROL_PANEL_PORT || 4310);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('CONTROL_PANEL_PORT 应为 1–65535');
+  console.log(`[${new Date().toISOString()}] 正在加载配置、发现服务并检查状态…`);
   createServer().then((server) => {
     server.on('error', (error) => { console.error(error.message); process.exitCode = 1; });
-    server.listen(port, '127.0.0.1', () => console.log(`Control Panel: http://127.0.0.1:${port}`));
+    server.listen(port, '127.0.0.1', () => console.log(`[${new Date().toISOString()}] 控制面板就绪：http://127.0.0.1:${port} · 后端 PID ${process.pid} · 配置 ${core.getConfigPath()}`));
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => process.exit(0)));
   }).catch((error) => { console.error(error); process.exitCode = 1; });
 }

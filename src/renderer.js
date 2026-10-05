@@ -37,6 +37,10 @@ const els = {
 };
 
 for (const id of ['sidebarCloseBtn', 'appLayout', 'navToggleBtn', 'navAllBtn', 'navRunningBtn', 'navFavoritesBtn', 'allNavCount', 'runningNavCount', 'favoriteNavCount', 'groupNav', 'tagNav', 'backendStatus', 'backendUptime', 'viewTitle', 'viewDescription', 'visibleCount', 'selectionBar', 'startVisibleBtn', 'groupFilter', 'tagFilter', 'favoriteFilter', 'selectVisible', 'selectionCount', 'batchStartBtn', 'batchGroupBtn', 'clearSelectionBtn', 'batchResult', 'organizationModal', 'organizationForm', 'organizationHint', 'organizationTitle', 'organizationError', 'closeOrganizationBtn', 'saveOrganizationBtn', 'groupOptions', 'tagsField', 'favoriteField', 'scanDepth', 'scanIssues']) els[id] = document.getElementById(id);
+els.projectNav = document.getElementById('projectNav');
+const { buildProjectTree, matchingProjects } = window.projectTree;
+const collapsedBranches = new Set();
+let hierarchyFilterSignature = '';
 const selectedProjects = new Set();
 let visibleProjects = [];
 let openProjectMenus = new Set();
@@ -339,7 +343,7 @@ function renderProject(project) {
     updateSelection();
   });
   const labels = fragment.querySelector('.project-labels');
-  for (const label of [project.favorite ? '★ 星标' : '', project.group, project.relationship?.role, ...(project.tags || [])].filter(Boolean)) {
+  for (const label of [project.favorite ? '★ 星标' : '', project.localGroup, project.relationship?.role, ...(project.tags || [])].filter(Boolean)) {
     const badge = document.createElement('span');
     badge.textContent = label;
     labels.appendChild(badge);
@@ -502,29 +506,78 @@ function fallbackIconSvg(surfaceType) {
   return `<svg ${shared}><path d="m12 3 7.5 4.3v9.4L12 21l-7.5-4.3V7.3L12 3Z"/><path d="m4.8 7.5 7.2 4.2 7.2-4.2M12 11.7V21"/></svg>`;
 }
 
-function appendProjectGroup(title, projects) {
-  if (projects.length === 0) {
-    return;
+function renderProjectNode(node, depth = 0) {
+  const section = document.createElement('section');
+  section.className = `project-node${node.children.length ? ' project-branch' : ''}`;
+  section.dataset.nodeKey = node.key;
+  if (node.children.length || node.collection) {
+    const header = document.createElement('header'); header.className = 'branch-header';
+    const button = document.createElement('button'); button.className = 'branch-toggle';
+    const collapsed = collapsedBranches.has(node.key);
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.setAttribute('aria-label', `${collapsed ? '展开' : '收起'} ${node.name} 的子项目`);
+    const arrow = document.createElement('span'); arrow.className = 'branch-chevron'; arrow.textContent = collapsed ? '▸' : '▾'; arrow.setAttribute('aria-hidden', 'true');
+    const title = document.createElement('span'); title.textContent = `${node.name} · ${node.collection ? '项目集合' : '父项目'}`;
+    button.append(arrow, title);
+    const descendants = matchingProjects(node);
+    const summary = document.createElement('span'); summary.className = 'branch-summary';
+    summary.textContent = `${descendants.length} 个服务 · ${descendants.filter((project) => project.status === 'running').length} 个运行中`;
+    const launch = document.createElement('button'); launch.className = 'group-start'; launch.textContent = '启动整个项目';
+    launch.disabled = batchInFlight || !descendants.some((project) => project.canBatchStart && project.status !== 'running');
+    launch.addEventListener('click', () => runBatch(descendants.map((project) => project.key), node.name));
+    header.append(button, summary, launch); section.appendChild(header);
+    const body = document.createElement('div'); body.className = 'branch-body'; body.hidden = collapsed;
+    button.addEventListener('click', () => {
+      const next = !body.hidden; body.hidden = next;
+      if (next) collapsedBranches.add(node.key); else collapsedBranches.delete(node.key);
+      button.setAttribute('aria-expanded', String(!next));
+      button.setAttribute('aria-label', `${next ? '展开' : '收起'} ${node.name} 的子项目`); arrow.textContent = next ? '▸' : '▾';
+    });
+    appendNodeContents(section, { ...node, children: [] }, depth);
+    appendNodeContents(body, { ...node, project: null }, depth); section.appendChild(body);
+  } else appendNodeContents(section, node, depth);
+  return section;
+}
+
+function appendNodeContents(container, node, depth) {
+  if (node.project && node.matches) container.appendChild(renderProject(node.project));
+  else if (node.project) {
+    const context = document.createElement('div'); context.className = 'parent-context';
+    const title = document.createElement('strong'); title.textContent = node.name;
+    const note = document.createElement('span'); note.textContent = '所属父项目 · 未匹配当前筛选';
+    context.append(title, note); container.appendChild(context);
   }
-  const group = document.createElement('section');
-  group.className = 'project-group';
-  const header = document.createElement('header');
-  header.className = 'project-group-header';
-  const heading = document.createElement('h2');
-  heading.textContent = title;
-  const count = document.createElement('span');
-  count.textContent = String(projects.length);
-  const startGroup = document.createElement('button');
-  startGroup.className = 'group-start secondary';
-  startGroup.textContent = '启动本组';
-  startGroup.disabled = batchInFlight || !projects.some((project) => project.canBatchStart && project.status !== 'running');
-  startGroup.addEventListener('click', () => runBatch(projects.map((project) => project.key), title));
-  header.append(heading, count, startGroup);
-  const rows = document.createElement('div');
-  rows.className = 'project-group-rows';
-  projects.forEach((project) => rows.appendChild(renderProject(project)));
-  group.append(header, rows);
-  els.list.appendChild(group);
+  if (node.children.length) {
+    const children = document.createElement('div'); children.className = 'project-children';
+    children.setAttribute('aria-label', `${node.name} 的子项目`);
+    for (const child of sortNodes(node.children)) {
+      const item = renderProjectNode(child, depth + 1);
+      if (child.project?.relationship?.notes) item.title = child.project.relationship.notes;
+      children.appendChild(item);
+    }
+    container.appendChild(children);
+  }
+}
+
+function sortNodes(nodes) {
+  const ordered = sortProjects(nodes.map((node) => node.project || { key: node.key, name: node.name }));
+  const positions = new Map(ordered.map((item, index) => [item.key, index]));
+  return [...nodes].sort((a, b) => positions.get(a.key) - positions.get(b.key));
+}
+
+function appendProjectGroup(title, nodes) {
+  const group = document.createElement('section'); group.className = 'project-group';
+  const projects = nodes.flatMap(matchingProjects);
+  const header = document.createElement('header'); header.className = 'project-group-header';
+  const heading = document.createElement('h2'); heading.textContent = title;
+  const count = document.createElement('span'); count.textContent = `${projects.length} 个服务`;
+  const launch = document.createElement('button'); launch.className = 'group-start'; launch.textContent = '启动本组';
+  launch.disabled = batchInFlight || !projects.some((project) => project.canBatchStart && project.status !== 'running');
+  launch.addEventListener('click', () => runBatch(projects.map((project) => project.key), title));
+  header.append(heading, count, launch);
+  const rows = document.createElement('div'); rows.className = 'project-group-rows';
+  for (const node of sortNodes(nodes)) rows.appendChild(renderProjectNode(node));
+  group.append(header, rows); els.list.appendChild(group);
 }
 
 function renderDashboard(data) {
@@ -535,10 +588,15 @@ function renderDashboard(data) {
   const query = projectSearchQuery.trim().toLocaleLowerCase();
   const projects = sortProjects(allProjects.filter((project) => (
     (statusFilter === 'all' || project.status === statusFilter) && projectMatchesSearch(project, query) &&
-    (groupFilter === 'all' || (groupFilter === 'ungrouped' ? !project.group : groupFilter.startsWith('collection:') ? (project.ancestors || []).some((item) => item.key === groupFilter.slice(11)) : project.group === groupFilter.slice(6))) &&
+    (groupFilter === 'all' || (groupFilter === 'ungrouped' ? !project.localGroup : groupFilter.startsWith('project:') ? project.key === groupFilter.slice(8) || (project.ancestors || []).some((item) => item.key === groupFilter.slice(8)) : project.localGroup === groupFilter.slice(6))) &&
     (tagFilter === 'all' || (project.tags || []).includes(tagFilter.slice(4))) &&
     (!els.favoriteFilter.checked || project.favorite)
   )));
+  const filterSignature = JSON.stringify([query, statusFilter, groupFilter, tagFilter, els.favoriteFilter.checked]);
+  if (filterSignature !== hierarchyFilterSignature && (query || statusFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || els.favoriteFilter.checked)) {
+    for (const project of projects) for (const ancestor of project.ancestors || []) collapsedBranches.delete(ancestor.key);
+  }
+  hierarchyFilterSignature = filterSignature;
   visibleProjects = projects;
   const existingKeys = new Set(allProjects.map((project) => project.key));
   for (const key of selectedProjects) if (!existingKeys.has(key)) selectedProjects.delete(key);
@@ -580,8 +638,8 @@ function renderDashboard(data) {
     els.list.appendChild(empty);
   } else {
     const grouped = new Map();
-    for (const project of projects) {
-      const title = project.group || '未分组';
+    for (const project of buildProjectTree(allProjects, data.scanReport?.collections || [], projects.map((project) => project.key))) {
+      const title = project.project?.localGroup || (project.children.length || project.collection ? '项目与子服务' : '独立服务');
       if (!grouped.has(title)) grouped.set(title, []);
       grouped.get(title).push(project);
     }
@@ -735,10 +793,10 @@ refresh().catch((error) => {
 });
 
 function renderOrganizationFilters(projects, collections) {
-  const groups = [...new Set(projects.map((project) => project.group).filter(Boolean))].sort();
+  const groups = [...new Set(projects.map((project) => project.localGroup).filter(Boolean))].sort();
   const tags = [...new Set(projects.flatMap((project) => project.tags || []))].sort();
   const fill = (select, options, value) => { select.replaceChildren(...options.map(([key, title]) => new Option(title, key))); select.value = value; };
-  fill(els.groupFilter, [['all', '全部分组'], ['ungrouped', '未分组'], ...groups.map((group) => [`group:${group}`, group]), ...collections.map((collection) => [`collection:${collection.key}`, `集合：${collection.name}（含子项目）`])], groupFilter);
+  fill(els.groupFilter, [['all', '全部分组'], ['ungrouped', '未分组'], ...groups.map((group) => [`group:${group}`, group]), ...buildProjectTree(projects, collections).filter((node) => node.children.length || node.collection).map((node) => [`project:${node.key}`, `项目：${node.name}（含子项目）`])], groupFilter);
   fill(els.tagFilter, [['all', '全部标签'], ...tags.map((tag) => [`tag:${tag}`, tag])], tagFilter);
   if (!els.groupFilter.value) { els.groupFilter.add(new Option('当前分组（暂无服务）', groupFilter)); els.groupFilter.value = groupFilter; }
   if (!els.tagFilter.value) { els.tagFilter.add(new Option('当前标签（暂无服务）', tagFilter)); els.tagFilter.value = tagFilter; }
@@ -847,25 +905,31 @@ function renderNavigation(projects, collections) {
     button.classList.toggle('is-active', active); button.setAttribute('aria-pressed', String(active));
   }
   els.groupNav.replaceChildren();
-  const scopeButton = (value, name, count) => {
+  const scopeButton = (value, name, count, target = els.groupNav, depth = 0) => {
     const button = document.createElement('button'); button.className = 'nav-item';
     button.classList.toggle('is-active', groupFilter === value); button.setAttribute('aria-pressed', String(groupFilter === value));
     const label = document.createElement('span'); label.textContent = name;
     const badge = document.createElement('span'); badge.className = 'nav-count'; badge.textContent = count;
+    button.style.setProperty('--nav-depth', Math.min(depth, 6));
     button.append(label, badge); button.addEventListener('click', () => {
       groupFilter = groupFilter === value ? 'all' : value; tagFilter = 'all'; statusFilter = 'all'; els.statusFilter.value = 'all'; els.favoriteFilter.checked = false;
       renderDashboard(latestPayload); closeMobileNavigation();
-    }); els.groupNav.appendChild(button);
+    }); target.appendChild(button);
   };
-  for (const collection of collections) scopeButton(`collection:${collection.key}`, `${collection.ancestors.length ? '↳ ' : ''}${collection.name}`, projects.filter((project) => (project.ancestors || []).some((item) => item.key === collection.key)).length);
-  const collectionGroups = new Set(collections.map((collection) => [...collection.ancestors.map((item) => item.name), collection.name].join(' / ')));
-  const groups = [...new Set(projects.map((project) => project.group).filter(Boolean))].sort();
-  for (const group of groups) if (!collectionGroups.has(group) || projects.some((project) => project.localGroup === group)) scopeButton(`group:${group}`, group, projects.filter((project) => project.group === group).length);
-  const ungrouped = projects.filter((project) => !project.group).length;
-  if (ungrouped) scopeButton('ungrouped', '未分组', ungrouped);
-  if (!collections.length && !groups.length) {
-    const note = document.createElement('p'); note.className = 'nav-empty'; note.textContent = '在服务菜单中归组，或用外层配置声明子项目。'; els.groupNav.appendChild(note);
+  els.projectNav.replaceChildren();
+  const navigateNode = (node, depth = 0) => {
+    scopeButton(`project:${node.key}`, node.name, matchingProjects(node).length, els.projectNav, depth);
+    for (const child of sortNodes(node.children)) navigateNode(child, depth + 1);
+  };
+  const families = sortNodes(buildProjectTree(projects, collections).filter((node) => node.children.length || node.collection));
+  families.forEach((node) => navigateNode(node));
+  if (!families.length) {
+    const note = document.createElement('p'); note.className = 'nav-empty'; note.textContent = '项目声明子服务后，在这里显示从属层级。'; els.projectNav.appendChild(note);
   }
+  const groups = [...new Set(projects.map((project) => project.localGroup).filter(Boolean))].sort();
+  for (const group of groups) scopeButton(`group:${group}`, group, projects.filter((project) => project.localGroup === group).length);
+  const ungrouped = projects.filter((project) => !project.localGroup).length;
+  if (ungrouped) scopeButton('ungrouped', '未分组', ungrouped);
   els.tagNav.replaceChildren();
   const tags = [...new Set(projects.flatMap((project) => project.tags || []))].sort();
   for (const tag of tags) {
@@ -873,7 +937,7 @@ function renderNavigation(projects, collections) {
     button.addEventListener('click', () => { tagFilter = tagFilter === `tag:${tag}` ? 'all' : `tag:${tag}`; renderDashboard(latestPayload); closeMobileNavigation(); }); els.tagNav.appendChild(button);
   }
   if (!tags.length) { const note = document.createElement('p'); note.className = 'nav-empty'; note.textContent = '为服务加上标签，快速组合不同工作环境。'; els.tagNav.appendChild(note); }
-  const selectedCollection = collections.find((collection) => groupFilter === `collection:${collection.key}`);
+  const selectedCollection = [...collections, ...projects].find((project) => groupFilter === `project:${project.key}`);
   els.viewTitle.textContent = selectedCollection?.name || (groupFilter.startsWith('group:') ? groupFilter.slice(6) : groupFilter === 'ungrouped' ? '未分组服务' : els.favoriteFilter.checked ? '星标服务' : statusFilter === 'running' ? '运行中的服务' : '全部服务');
   if (tagFilter !== 'all') els.viewTitle.textContent += ` · ${tagFilter.slice(4)}`;
   els.viewDescription.textContent = selectedCollection ? selectedCollection.notes || '按外层配置声明的归属关系，管理工作区内的所有服务。' : '把分散的服务组织起来，随时启动你需要的工作环境。';

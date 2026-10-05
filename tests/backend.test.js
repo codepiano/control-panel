@@ -94,6 +94,11 @@ test('web API serves the browser and enforces session, host, origin and static a
   server = await createServer({ autoStart: false });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
+  const health = await (await fetch(`${base}/health`)).json();
+  assert.equal(health.pid, process.pid);
+  assert.equal(health.launcherPid, process.ppid);
+  assert.equal(health.services, 5);
+  assert.ok(Number.isInteger(health.running));
   const page = await fetch(base);
   assert.equal(page.status, 200);
   assert.ok((await page.text()).includes('client.js'));
