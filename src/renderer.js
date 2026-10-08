@@ -36,7 +36,7 @@ const els = {
   template: document.getElementById('projectTemplate'),
 };
 
-for (const id of ['sidebarCloseBtn', 'appLayout', 'navToggleBtn', 'navAllBtn', 'navRunningBtn', 'navFavoritesBtn', 'allNavCount', 'runningNavCount', 'favoriteNavCount', 'groupNav', 'tagNav', 'backendStatus', 'backendUptime', 'viewTitle', 'viewDescription', 'visibleCount', 'selectionBar', 'startVisibleBtn', 'groupFilter', 'tagFilter', 'favoriteFilter', 'selectVisible', 'selectionCount', 'batchStartBtn', 'batchGroupBtn', 'clearSelectionBtn', 'batchResult', 'organizationModal', 'organizationForm', 'organizationHint', 'organizationTitle', 'organizationError', 'closeOrganizationBtn', 'saveOrganizationBtn', 'groupOptions', 'tagsField', 'favoriteField', 'scanDepth', 'scanIssues']) els[id] = document.getElementById(id);
+for (const id of ['sidebarCloseBtn', 'appLayout', 'navToggleBtn', 'navAllBtn', 'navRunningBtn', 'navFavoritesBtn', 'allNavCount', 'runningNavCount', 'favoriteNavCount', 'groupNav', 'tagNav', 'backendStatus', 'backendUptime', 'viewTitle', 'viewDescription', 'visibleCount', 'selectionBar', 'startVisibleBtn', 'groupFilter', 'tagFilter', 'favoriteFilter', 'selectVisible', 'selectionCount', 'batchStartBtn', 'batchGroupBtn', 'clearSelectionBtn', 'batchResult', 'organizationModal', 'organizationForm', 'organizationHint', 'organizationTitle', 'organizationError', 'closeOrganizationBtn', 'saveOrganizationBtn', 'groupOptions', 'tagsField', 'favoriteField', 'scanDepth', 'scanIssues', 'portPanel', 'portSummary', 'portSuggestions', 'portRows']) els[id] = document.getElementById(id);
 els.projectNav = document.getElementById('projectNav');
 const { buildProjectTree, matchingProjects } = window.projectTree;
 const collapsedBranches = new Set();
@@ -356,7 +356,7 @@ function renderProject(project) {
     try { await api.saveProjectOrganization([project.key], { favorite: !project.favorite }); await refresh(); }
     catch (error) { showBatchMessage(`保存失败：${error.message}`); }
   });
-  const outputText = project.details || project.lastOutput || '';
+  const outputText = [...(project.portWarnings || []), project.details || project.lastOutput || ''].filter(Boolean).join(' · ');
   name.textContent = project.name;
   notes.textContent = project.notes || project.techStack || '未填写说明';
   output.textContent = statusSummary(project, outputText);
@@ -589,6 +589,20 @@ function renderDashboard(data) {
   openProjectMenus = new Set([...els.list.querySelectorAll('.card')].filter((card) => card.querySelector('.project-menu')?.open).map((card) => card.dataset.key));
   expandedProjectKeys = new Set([...els.list.querySelectorAll('.card')].filter((card) => !card.querySelector('.project-details')?.classList.contains('hidden')).map((card) => card.dataset.key));
   latestPayload = data;
+  const report = data.portReport;
+  if (report) {
+    els.portSummary.textContent = `本机端口分配 · ${report.conflictCount} 个需关注`;
+    els.portSuggestions.textContent = report.error || `候选空闲端口：${report.suggestions.join('、')}（当前快照，使用前会再次检查）`;
+    els.portRows.replaceChildren();
+    for (const row of report.rows) {
+      const tr = document.createElement('tr');
+      for (const value of [row.port, row.owners.map((owner) => owner.name).join('、') || '未登记', row.listeners.map((listener) => `${listener.command} · PID ${listener.pid} · ${listener.address}`).join('；') || '未监听', row.warnings.join('；') || (row.owners.length ? '已分配' : '本机进程占用')]) {
+        const td = document.createElement('td'); td.textContent = String(value); tr.appendChild(td);
+      }
+      if (row.warnings.length) tr.className = 'form-error';
+      els.portRows.appendChild(tr);
+    }
+  }
   const allProjects = data.projects || [];
   const query = projectSearchQuery.trim().toLocaleLowerCase();
   const projects = sortProjects(allProjects.filter((project) => (

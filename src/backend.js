@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const os = require('os');
 const { createSnapshotCache } = require('./snapshot-cache');
 const { createGitSync } = require('./git-sync');
+const { projectPorts, readListeners, buildPortReport, assertPortsAvailable } = require('./ports');
 let gitSync = null;
 const STATUS_REFRESH_MS = 30000;
 const dashboardCache = createSnapshotCache(collectDashboardSnapshot, { ttlMs: STATUS_REFRESH_MS });
@@ -41,6 +42,7 @@ let currentConfig = defaultConfig();
 const startingProjects = new Set();
 const stoppingProjects = new Set();
 let batchStartInFlight = false;
+let portRegistrationQueue = Promise.resolve();
 
 function defaultConfig() {
   return {
@@ -704,6 +706,8 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     openHomepageCommand: openEntryCommand,
     homepageUrl,
     frontendUrl,
+    metricsUrl: String(manifest.metricsUrl || ''),
+    ports: Array.isArray(manifest.ports) ? manifest.ports : [],
     appLaunchCommand,
     repositoryUrl,
     techStack,
@@ -731,6 +735,8 @@ function buildProjectFromLegacyEntry(entry) {
     openHomepageCommand: String(entry.openHomepageCommand || ''),
     homepageUrl: String(entry.homepageUrl || entry.homepage || entry.projectUrl || entry.url || ''),
     frontendUrl: String(entry.frontendUrl || entry.appUrl || entry.localUrl || entry.siteUrl || entry.devUrl || ''),
+    metricsUrl: String(entry.metricsUrl || ''),
+    ports: Array.isArray(entry.ports) ? entry.ports : [],
     repositoryUrl: String(entry.repositoryUrl || entry.repository || entry.repoUrl || entry.repo || ''),
     techStack: String(entry.techStack || entry.stack || entry.technology || entry.runtime || ''),
     notes: String(entry.notes || ''),
@@ -936,13 +942,74 @@ async function collectProjectsSnapshot() {
   };
 }
 
+// Serialize registrations across agents; the manifest is the persistent reservation.
+function registerProjectPorts(input) {
+  const operation = portRegistrationQueue.then(() => performPortRegistration(input));
+  portRegistrationQueue = operation.catch(() => {});
+  return operation;
+}
+
+async function performPortRegistration(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('需要端口注册参数');
+  const directory = String(input.projectDir || '');
+  if (!path.isAbsolute(directory)) throw new Error('projectDir 必须是绝对路径');
+  const projectDir = fs.realpathSync(directory);
+  const manifestPath = path.join(projectDir, DEFAULT_MANIFEST_NAME);
+  if (fs.realpathSync(manifestPath) !== manifestPath) throw new Error('manifest 不能是指向其它位置的符号链接');
+  const manifest = parseManifest(manifestPath);
+  if (!manifest || Array.isArray(manifest) || typeof manifest !== 'object' || !manifest.name) throw new Error('请先创建含 name 的 control-panel.json');
+  if (manifest.kind === 'collection') throw new Error('集合没有运行进程，不能注册端口');
+  const projects = discoverProjects(loadConfig());
+  const existing = projects.find((project) => project.manifestPath && fs.realpathSync(project.manifestPath) === manifestPath);
+  const project = buildProjectFromManifest(manifestPath, manifest, projectDir);
+  const others = projects.filter((other) => other.key !== existing?.key);
+  const previousPorts = existing ? projectPorts(existing) : [];
+  const requested = input.ports;
+  const count = input.count === undefined ? 1 : input.count;
+  if (requested !== undefined && (!Array.isArray(requested) || !requested.length || requested.length > 20 || new Set(requested).size !== requested.length || requested.some((port) => !Number.isInteger(port) || port < 1 || port > 65535))) throw new Error('ports 必须是 1–20 个不重复的有效端口整数');
+  if (requested === undefined && (!Number.isInteger(count) || count < 1 || count > 20)) throw new Error('count 必须介于 1 和 20 之间');
+  const reservations = new Set(others.flatMap(projectPorts));
+  const { listeners, error } = await readListeners();
+  if (error) throw new Error(error);
+  const occupied = new Set(listeners.map((listener) => listener.port));
+  const ports = requested ? [...requested] : previousPorts.slice(0, count);
+  if (!requested) {
+    for (let port = 4310; port <= 65535 && ports.length < count; port++) {
+      if (!reservations.has(port) && !occupied.has(port) && !ports.includes(port)) ports.push(port);
+    }
+    if (ports.length !== count) throw new Error('没有足够的空闲端口');
+  }
+  const next = { ...project, ports };
+  // Existing assignments remain reservations even while listening; never infer PID ownership here.
+  for (const port of projectPorts(next)) {
+    if (reservations.has(port)) throw new Error(`端口 ${port} 已分配给其它服务`);
+    if (!previousPorts.includes(port)) await assertPortsAvailable({ key: project.key, ports: [port] }, others);
+  }
+  const previousText = fs.readFileSync(manifestPath, 'utf8');
+  writeProjectManifest(manifestPath, { ...manifest, ports });
+  const config = loadConfig();
+  try {
+    if (!existing) saveConfig({ ...config, roots: normalizeList([...config.roots, projectDir]) });
+  } catch (error) {
+    fs.writeFileSync(manifestPath, previousText);
+    throw error;
+  }
+  await refreshAll();
+  return { projectDir, manifestPath, ports, reservedPorts: projectPorts(next), status: 'reserved' };
+}
+
 async function collectDashboardSnapshot() {
   const { config, projects } = await collectProjectsSnapshot();
-  const loginItem = await getLoginItemStatus();
+  const [loginItem, listeners] = await Promise.all([getLoginItemStatus(), readListeners()]);
+  const portReport = buildPortReport(projects, listeners);
+  for (const project of projects) {
+    project.portWarnings = portReport.rows.filter((row) => row.owners.some((owner) => owner.key === project.key)).flatMap((row) => row.warnings.map((warning) => `端口 ${row.port}：${warning}`));
+  }
   return {
     config,
     projects,
     scanReport,
+    portReport,
     backendStartedAt: BACKEND_STARTED_AT,
     backendPid: process.pid,
     statusRefreshMs: STATUS_REFRESH_MS,
@@ -977,6 +1044,10 @@ async function performProjectStart(projectKey) {
   const project = findProjectByKey(projectKey);
   if (!project) throw new Error('项目不存在，请刷新后重试');
   if (isPanelProject(project)) throw new Error('后端自身请通过 scripts/start.sh 管理');
+  if ((await getProjectStatus(project)).status === 'running') return { outcome: 'skipped', detail: '已经运行' };
+  await assertPortsAvailable(project, discoverProjects(loadConfig()));
+  const competing = projectsCache.find((other) => other.key !== project.key && startingProjects.has(other.key) && projectPorts(other).some((port) => projectPorts(project).includes(port)));
+  if (competing) throw new Error(`端口正在由 ${competing.name} 启动，请稍后重试`);
 
   projectState[project.key] = {
     ...(projectState[project.key] || {}),
@@ -1406,6 +1477,8 @@ function registerActions() {
 
   registerAction('save-project-organization', (keys, input) => saveProjectOrganization(keys, input));
   registerAction('start-projects', (keys) => startProjects(keys));
+  registerAction('register-project-ports', (input) => registerProjectPorts(input));
+  registerAction('get-port-allocations', async () => (await refreshAll()).portReport);
 
   registerAction('start-project', async (projectKey) => {
     await startProject(projectKey);
@@ -1485,6 +1558,11 @@ function registerActions() {
     }
 
     const presentation = validateProjectPresentation(input || {});
+    const previousPorts = projectPorts(project);
+    const nextProject = { ...project, ...presentation };
+    const otherProjects = discoverProjects(loadConfig()).filter((other) => other.key !== project.key);
+    const newPorts = projectPorts(nextProject).filter((port) => !previousPorts.includes(port));
+    if (newPorts.length) await assertPortsAvailable({ ...nextProject, ports: [], metricsUrl: '', frontendUrl: presentation.frontendUrl }, otherProjects);
     const nextManifest = { ...manifest, ...presentation };
     if (!presentation.frontendUrl) {
       delete nextManifest.frontendUrl;

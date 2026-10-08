@@ -242,3 +242,9 @@ h1 { margin: 0; font-size: 30px; font-weight: 650; line-height: 1.25; letter-spa
 
 .repository-action-summary { padding: 12px 14px; border: 1px solid #edc482; border-radius: 8px; background: #fff1d6; color: #92510b; font-size: 12px; line-height: 1.8; }
 .repository-view-tabs { flex-wrap: wrap; }
+
+.port-panel { margin-bottom: 20px; }
+.port-panel summary { cursor: pointer; font-weight: 600; }
+.port-table-wrap { overflow: auto; max-height: 420px; }
+.port-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.port-table th, .port-table td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border, #ddd); vertical-align: top; }

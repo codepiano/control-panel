@@ -158,3 +158,71 @@ test('dashboard reads share status checks across clients while explicit refresh 
   await core.invoke('refresh-projects');
   assert.equal(fs.readFileSync(counter, 'utf8').trim().split('\n').length, 3);
 });
+
+test('duplicate local port reservations block single and batch starts and reject a new conflicting URL', async () => {
+  const a = writeManifest(path.join(root, 'port-a'), { name: 'Port A', frontendUrl: 'http://localhost:54321', startCommand: 'exit 0', statusCommand: 'exit 1' });
+  const b = writeManifest(path.join(root, 'port-b'), { name: 'Port B', frontendUrl: 'http://127.0.0.1:54321', startCommand: 'exit 0', statusCommand: 'exit 1' });
+  const c = writeManifest(path.join(root, 'port-c'), { name: 'Port C', startCommand: 'exit 0', statusCommand: 'exit 1' });
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json'), 'utf8'));
+  manifest.children.push({ path: 'port-a' }, { path: 'port-b' }, { path: 'port-c' }); writeManifest(root, manifest);
+  await core.invoke('refresh-projects');
+  const payload = await core.invoke('get-dashboard-data');
+  const row = payload.portReport.rows.find((row) => row.port === 54321);
+  assert.equal(row.owners.length, 2);
+  assert.ok(payload.projects.find((project) => project.key === a).portWarnings[0].includes('重复分配'));
+  await assert.rejects(core.invoke('start-project', [a]), /已分配给 Port B/);
+  const results = await core.invoke('start-projects', [[a, b]]);
+  assert.ok(results.every((result) => result.outcome === 'failed'));
+  await assert.rejects(core.invoke('save-project-presentation', [c, { name: 'Port C', frontendUrl: 'http://localhost:54321' }]), /已分配/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'port-c/control-panel.json'), 'utf8')).frontendUrl, undefined);
+});
+
+test('port registration persists new discoveries, serializes competing agents and reuses reservations', async () => {
+  const first = path.join(temporary, 'registered-a');
+  const second = path.join(temporary, 'registered-b');
+  writeManifest(first, { name: 'Registered A', workingDirectory: '.', notes: 'preserve me', custom: { value: 42 } });
+  writeManifest(second, { name: 'Registered B', workingDirectory: '.' });
+  const results = await Promise.all([
+    core.invoke('register-project-ports', [{ projectDir: first, count: 2 }]),
+    core.invoke('register-project-ports', [{ projectDir: second, count: 2 }]),
+  ]);
+  assert.equal(new Set(results.flatMap((result) => result.ports)).size, 4);
+  for (const result of results) assert.equal(result.status, 'reserved');
+  const manifest = JSON.parse(fs.readFileSync(path.join(first, 'control-panel.json'), 'utf8'));
+  assert.equal(manifest.notes, 'preserve me');
+  assert.deepEqual(manifest.custom, { value: 42 });
+  assert.deepEqual(manifest.ports, results[0].ports);
+  const config = JSON.parse(fs.readFileSync(process.env.CONTROL_PANEL_CONFIG, 'utf8'));
+  assert.ok(config.roots.includes(fs.realpathSync(first)));
+  assert.ok(config.roots.includes(fs.realpathSync(second)));
+  const again = await core.invoke('register-project-ports', [{ projectDir: first, count: 2 }]);
+  assert.deepEqual(again.ports, results[0].ports);
+  const inventory = await core.invoke('get-port-allocations');
+  assert.ok(inventory.rows.find((row) => row.port === again.ports[0]).owners.some((owner) => owner.name === 'Registered A'));
+  const before = fs.readFileSync(path.join(second, 'control-panel.json'), 'utf8');
+  await assert.rejects(core.invoke('register-project-ports', [{ projectDir: second, ports: results[0].ports }]), /已分配/);
+  assert.equal(fs.readFileSync(path.join(second, 'control-panel.json'), 'utf8'), before);
+});
+
+test('registration rejects real occupied ports, collections and invalid requests without reserving them', async () => {
+  const net = require('node:net');
+  const listener = net.createServer();
+  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
+  const port = listener.address().port;
+  const directory = path.join(temporary, 'blocked-registration');
+  writeManifest(directory, { name: 'Blocked', workingDirectory: '.' });
+  const before = fs.readFileSync(path.join(directory, 'control-panel.json'), 'utf8');
+  const configBefore = fs.readFileSync(process.env.CONTROL_PANEL_CONFIG, 'utf8');
+  try {
+    await assert.rejects(core.invoke('register-project-ports', [{ projectDir: directory, ports: [port] }]), /占用|EADDRINUSE/);
+    assert.equal(listener.listening, true);
+    for (const ports of [[0], [65536], ['4323'], [4323, 4323], []]) {
+      await assert.rejects(core.invoke('register-project-ports', [{ projectDir: directory, ports }]), /ports/);
+    }
+    await assert.rejects(core.invoke('register-project-ports', [{ projectDir: directory, count: 0 }]), /count/);
+    await assert.rejects(core.invoke('register-project-ports', [{ projectDir: '.', count: 1 }]), /绝对路径/);
+    await assert.rejects(core.invoke('register-project-ports', [{ projectDir: root, count: 1 }]), /集合/);
+    assert.equal(fs.readFileSync(path.join(directory, 'control-panel.json'), 'utf8'), before);
+    assert.equal(fs.readFileSync(process.env.CONTROL_PANEL_CONFIG, 'utf8'), configBefore);
+  } finally { await new Promise((resolve) => listener.close(resolve)); }
+});
