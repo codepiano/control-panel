@@ -438,8 +438,9 @@ function renderProject(project) {
 
   homepageBtn.addEventListener('click', async () => {
     homepageBtn.disabled = true;
-    await api.openProjectHomepage(project.key);
-    await refresh();
+    try { await api.openProjectHomepage(project.key); await refresh(); }
+    catch (error) { showBatchMessage(error.message); }
+    finally { homepageBtn.disabled = false; }
   });
 
   repositoryBtn.addEventListener('click', async () => {

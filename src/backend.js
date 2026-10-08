@@ -1169,7 +1169,8 @@ async function openProjectHomepage(projectKey) {
   }
 
   if (project.openEntryCommand || project.openHomepageCommand) {
-    await execCommand(project.openEntryCommand || project.openHomepageCommand, project.workingDirectory);
+    const result = await execCommand(project.openEntryCommand || project.openHomepageCommand, project.workingDirectory);
+    if (result.code !== 0) throw new Error(`打开 ${project.name} 失败（退出码 ${result.code}）：${result.stderr.trim() || result.stdout.trim() || '入口脚本执行失败'}`);
     return;
   }
 
@@ -1185,7 +1186,8 @@ async function openProjectHomepage(projectKey) {
   }
 
   if (project.appLaunchCommand) {
-    await execCommand(project.appLaunchCommand, project.workingDirectory);
+    const result = await execCommand(project.appLaunchCommand, project.workingDirectory);
+    if (result.code !== 0) throw new Error(`打开 ${project.name} 失败（退出码 ${result.code}）：${result.stderr.trim() || result.stdout.trim() || '启动命令执行失败'}`);
     return;
   }
 

@@ -226,3 +226,15 @@ test('registration rejects real occupied ports, collections and invalid requests
     assert.equal(fs.readFileSync(process.env.CONTROL_PANEL_CONFIG, 'utf8'), configBefore);
   } finally { await new Promise((resolve) => listener.close(resolve)); }
 });
+
+test('opening an entry propagates script errors and remains retryable', async () => {
+  const directory = path.join(temporary, 'entry-test');
+  const marker = path.join(directory, 'opened');
+  const key = writeManifest(directory, { name: 'Entry test', workingDirectory: '.', openEntryCommand: 'echo "Node.js 24 required" >&2; exit 2' });
+  await core.invoke('set-project-roots', [[...JSON.parse(fs.readFileSync(process.env.CONTROL_PANEL_CONFIG, 'utf8')).roots, directory]]);
+  await assert.rejects(core.invoke('open-project-homepage', [key]), /打开 Entry test 失败.*退出码 2.*Node.js 24 required/);
+  writeManifest(directory, { name: 'Entry test', workingDirectory: '.', openEntryCommand: `touch '${marker}'` });
+  await core.invoke('refresh-projects');
+  assert.equal(await core.invoke('open-project-homepage', [key]), true);
+  assert.equal(fs.existsSync(marker), true);
+});
