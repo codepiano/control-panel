@@ -31,6 +31,12 @@ async function inspectRepository(repo) {
   const head = await optionalGit(directory, ['rev-parse', 'HEAD']);
   return { ...repo, head, branch, dirty, inProgress, upstream, remote, mergeRef, ahead, behind, status, remoteUrl: remoteUrl.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1***@') };
 }
+function canProcess(repo, kind) {
+  if (!repo.checkedAt || !repo.branch || !repo.upstream || !repo.remoteUrl || !repo.mergeRef?.startsWith('refs/heads/') || repo.error || repo.dirty || repo.inProgress) return false;
+  const pull = repo.status === 'behind' && repo.behind > 0 && !repo.ahead;
+  const push = repo.status === 'ahead' && repo.ahead > 0 && !repo.behind;
+  return kind === 'pull' ? pull : kind === 'push' ? push : pull || push;
+}
 function createGitSync({ statePath, getProjects, now = () => new Date() }) {
   let state;
   try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { state = {}; }
@@ -74,7 +80,7 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
     if (keys !== undefined && (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string'))) throw new Error('仓库参数应为数组');
     await discover();
     const retry = scheduled && state.lastAttemptSlot === dailySlot(now()) && state.repositories.some((repo) => repo.error);
-    const selected = keys === undefined ? (retry ? state.repositories.filter((repo) => repo.error) : state.repositories) : state.repositories.filter((repo) => keys.includes(repo.key));
+    const selected = keys === undefined ? (kind !== 'check' ? state.repositories.filter((repo) => canProcess(repo, kind)) : retry ? state.repositories.filter((repo) => repo.error) : state.repositories) : state.repositories.filter((repo) => keys.includes(repo.key));
     if (keys?.some((key) => !selected.some((repo) => repo.key === key))) throw new Error('仓库不属于当前项目列表');
     state.lastAttemptAt = now().toISOString(); state.lastAttemptSlot = dailySlot(now()); state.results = []; state.operation = kind;
     const slot = dailySlot(now());

@@ -23,7 +23,11 @@ function fixture(name) {
 function manager(f, options = {}) {
   const result = createGitSync({ statePath: path.join(f.root, 'sync-state.json'), getProjects: () => [{ key: 'project', name: 'Service', projectDir: f.one }], ...options }); managers.push(result); return result;
 }
-async function run(service, kind, keys) { service.request(kind, keys); return service.wait(); }
+// Tests of individual operations explicitly select their fixture repositories.
+async function run(service, kind, keys) {
+  if (keys === undefined && ['pull', 'push'].includes(kind)) { await service.discover(); keys = service.snapshot().repositories.map((repo) => repo.key); }
+  service.request(kind, keys); return service.wait();
+}
 
 test('check fetches without changing work files; ff-only pull and normal push synchronize two computers', async () => {
   const f = fixture('sync'); const service = manager(f);
@@ -111,7 +115,7 @@ test('a failed push keeps remote history intact and does not stop other reposito
   assert.equal(git(second.remote, 'rev-parse', 'main'), git(second.one, 'rev-parse', 'HEAD'));
 });
 
-test('process all chooses pull or push per repository and skips dirty or diverged histories', async () => {
+test('process all only selects scanned actionable repositories and leaves other snapshots untouched', async () => {
   const pull = fixture('all-pull');
   const push = fixture('all-push');
   const dirty = fixture('all-dirty');
@@ -126,10 +130,12 @@ test('process all chooses pull or push per repository and skips dirty or diverge
   const localHead = git(diverged.one, 'rev-parse', 'HEAD');
   const remoteHead = git(diverged.remote, 'rev-parse', 'main');
   const service = manager(pull, { getProjects: () => [pull, push, dirty, diverged].map((f, index) => ({ key: String(index), projectDir: f.one })) });
+  const scanned = await run(service, 'check');
+  const untouched = scanned.repositories.slice(2);
   const state = await run(service, 'sync');
   assert.equal(state.operation, 'sync');
   assert.deepEqual(state.results.map((item) => [item.outcome, item.detail]), [
-    ['success', '已快进更新'], ['success', '已推送'], ['skipped', '有未提交修改'], ['skipped', '分支已分叉，需要先处理合并'],
+    ['success', '已快进更新'], ['success', '已推送'],
   ]);
   assert.equal(git(pull.one, 'rev-parse', 'HEAD'), git(pull.remote, 'rev-parse', 'main'));
   assert.equal(git(push.one, 'rev-parse', 'HEAD'), git(push.remote, 'rev-parse', 'main'));
@@ -137,6 +143,40 @@ test('process all chooses pull or push per repository and skips dirty or diverge
   assert.equal(fs.readFileSync(path.join(dirty.one, 'file.txt'), 'utf8'), 'unfinished');
   assert.equal(git(diverged.one, 'rev-parse', 'HEAD'), localHead);
   assert.equal(git(diverged.remote, 'rev-parse', 'main'), remoteHead);
+  assert.deepEqual(state.repositories.slice(2), untouched);
   const again = await run(service, 'sync');
-  assert.deepEqual(again.results.slice(0, 2).map((item) => item.detail), ['无需同步', '无需同步']);
+  assert.deepEqual(again.results, []);
+});
+
+test('bulk sync does not fetch synced or newly discovered unchecked repositories', async () => {
+  const synced = fixture('bulk-synced'); const pending = fixture('bulk-pending'); const unchecked = fixture('bulk-unchecked');
+  let projects = [synced, pending].map((f, index) => ({ key: String(index), projectDir: f.one }));
+  const service = manager(synced, { getProjects: () => projects });
+  commit(pending.two, 'remote.txt', 'pending'); git(pending.two, 'push');
+  const scanned = await run(service, 'check');
+  const before = scanned.repositories.find((repo) => repo.status === 'synced');
+  git(synced.one, 'remote', 'set-url', 'origin', path.join(synced.root, 'missing.git'));
+  git(unchecked.one, 'remote', 'set-url', 'origin', path.join(unchecked.root, 'missing.git'));
+  projects = [...projects, { key: 'new', projectDir: unchecked.one }];
+  const result = await run(service, 'sync');
+  assert.deepEqual(result.results.map((item) => item.outcome), ['success']);
+  assert.deepEqual(result.repositories.find((repo) => repo.key === before.key), before);
+  const newRepo = result.repositories.find((repo) => repo.directory === fs.realpathSync(unchecked.one));
+  assert.equal(newRepo.status, 'unchecked'); assert.equal(newRepo.checkedAt, null);
+});
+
+test('bulk pull and push select only scanned matching direction and still recheck local changes', async () => {
+  const pull = fixture('bulk-direction-pull'); const push = fixture('bulk-direction-push');
+  commit(pull.two, 'remote.txt', 'pull'); git(pull.two, 'push');
+  commit(push.one, 'local.txt', 'push');
+  const service = manager(pull, { getProjects: () => [pull, push].map((f, index) => ({ key: String(index), projectDir: f.one })) });
+  await run(service, 'check');
+  fs.writeFileSync(path.join(pull.one, 'file.txt'), 'changed-after-scan');
+  service.request('pull'); const pulled = await service.wait();
+  assert.deepEqual(pulled.results.map((item) => item.outcome), ['skipped']);
+  assert.match(pulled.results[0].detail, /未提交/);
+  assert.equal(fs.readFileSync(path.join(pull.one, 'file.txt'), 'utf8'), 'changed-after-scan');
+  service.request('push'); const pushed = await service.wait();
+  assert.deepEqual(pushed.results.map((item) => item.outcome), ['success']);
+  assert.equal(git(push.remote, 'rev-parse', 'main'), git(push.one, 'rev-parse', 'HEAD'));
 });

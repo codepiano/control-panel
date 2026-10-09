@@ -1040,7 +1040,7 @@ function renderRepositorySync(payload) {
   repoEls.pullAllRepositoriesBtn.disabled = payload.busy || !readyPulls;
   repoEls.pushAllRepositoriesBtn.disabled = payload.busy || !readyPushes;
   repoEls.syncAllRepositoriesBtn.disabled = payload.busy || !(readyPulls + readyPushes);
-  repoEls.syncAllRepositoriesBtn.title = '逐项重新检查并拉取或推送，需人工处理的仓库会跳过并列出原因';
+  repoEls.syncAllRepositoriesBtn.title = '只处理已扫描确认可拉取或推送的仓库，其它仓库不检查；执行前复核所选仓库状态';
   repoEls.checkRepositoriesBtn.textContent = payload.busy ? '仓库处理中…' : '检查仓库同步';
   repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : payload.operation === 'sync' ? '同步' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
   repoEls.repositorySchedule.textContent = `下次计划：${formatTimestamp(payload.nextCheckAt)}（本机时区） · 检查失败 15 分钟后重试 · 同一仓库只检查一次`;
