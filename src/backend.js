@@ -1159,7 +1159,7 @@ async function performProjectStop(projectKey) {
 
 async function restartProject(projectKey) {
   await stopProject(projectKey);
-  await startProject(projectKey);
+  return startProject(projectKey);
 }
 
 async function openProjectHomepage(projectKey) {
@@ -1483,7 +1483,8 @@ function registerActions() {
   registerAction('get-port-allocations', async () => (await refreshAll()).portReport);
 
   registerAction('start-project', async (projectKey) => {
-    await startProject(projectKey);
+    const result = await startProject(projectKey);
+    if (result.outcome === 'failed') throw new Error(result.detail);
     return true;
   });
 
@@ -1493,7 +1494,8 @@ function registerActions() {
   });
 
   registerAction('restart-project', async (projectKey) => {
-    await restartProject(projectKey);
+    const result = await restartProject(projectKey);
+    if (result.outcome === 'failed') throw new Error(result.detail);
     return true;
   });
 

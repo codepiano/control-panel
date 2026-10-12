@@ -299,6 +299,26 @@ function renderRoots(config) {
   });
 }
 
+async function runProjectAction(button, project, action) {
+  const label = { start: '启动', stop: '停止', restart: '重启' }[action];
+  button.disabled = true;
+  button.textContent = `${label}中…`;
+  try {
+    await api[`${action}Project`](project.key);
+  } catch (error) {
+    showBatchMessage(`${project.name} ${label}失败：${error.message}`);
+  } finally {
+    try { await refresh(); }
+    finally {
+      // An unchanged dashboard snapshot does not redraw this button.
+      const current = latestPayload?.projects.find((item) => item.key === project.key) || project;
+      const transitioning = current.status === 'starting' || current.status === 'stopping';
+      button.disabled = transitioning;
+      button.textContent = action === 'restart' ? '重启' : transitioning ? statusLabel(current.status) : current.status === 'running' ? '停止' : '启动';
+    }
+  }
+}
+
 function renderProject(project) {
   const fragment = els.template.content.cloneNode(true);
   const card = fragment.querySelector('.card');
@@ -420,20 +440,11 @@ function renderProject(project) {
   primaryAction.textContent = isRunning ? '停止' : isTransitioning ? statusLabel(project.status) : '启动';
   primaryAction.dataset.action = isRunning ? 'stop' : 'start';
   primaryAction.disabled = isTransitioning;
-  primaryAction.addEventListener('click', async () => {
-    primaryAction.disabled = true;
-    if (isRunning) {
-      await api.stopProject(project.key);
-    } else {
-      await api.startProject(project.key);
-    }
-    await refresh();
-  });
+  primaryAction.addEventListener('click', () => runProjectAction(primaryAction, project, isRunning ? 'stop' : 'start'));
 
   restartBtn.addEventListener('click', async () => {
-    restartBtn.disabled = true;
     if (project.isPanel) await restartPanel();
-    else { await api.restartProject(project.key); await refresh(); }
+    else await runProjectAction(restartBtn, project, 'restart');
   });
 
   homepageBtn.addEventListener('click', async () => {

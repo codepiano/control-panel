@@ -138,6 +138,8 @@ test('batch launch reports lifecycle wrapper exit failures and keeps subsequent 
   assert.equal(results[1].outcome, 'skipped');
   const payload = await core.invoke('get-dashboard-data');
   assert.equal(payload.projects.find((project) => project.key === key).status, 'error');
+  await assert.rejects(core.invoke('start-project', [key]), /startup-failed/);
+  await assert.rejects(core.invoke('restart-project', [key]), /startup-failed/);
 });
 
 
