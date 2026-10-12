@@ -1015,7 +1015,7 @@ els.sidebarCloseBtn.addEventListener('click', closeMobileNavigation);
 els.navToggleBtn.addEventListener('click', () => { const open = els.appLayout.classList.toggle('sidebar-open'); els.navToggleBtn.setAttribute('aria-expanded', String(open)); });
 
 
-const repoEls = Object.fromEntries(['repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults', 'repositoryAttentionBtn', 'repositoryAllBtn', 'repositoryPullBtn', 'repositoryPushBtn', 'repositoryActionSummary', 'syncAllRepositoriesBtn'].map((id) => [id, document.getElementById(id)]));
+const repoEls = Object.fromEntries(['repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults', 'repositoryAttentionBtn', 'repositoryAllBtn', 'repositoryPullBtn', 'repositoryPushBtn', 'repositoryActionSummary', 'repositoryOperationSummary', 'syncAllRepositoriesBtn'].map((id) => [id, document.getElementById(id)]));
 let repositoryPayload = null;
 let repositoryView = 'attention';
 let repositoryPoll = null;
@@ -1054,6 +1054,12 @@ function renderRepositorySync(payload) {
   repoEls.syncAllRepositoriesBtn.title = '只处理已扫描确认可拉取或推送的仓库，其它仓库不检查；执行前复核所选仓库状态';
   repoEls.checkRepositoriesBtn.textContent = payload.busy ? '仓库处理中…' : '检查仓库同步';
   repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : payload.operation === 'sync' ? '同步' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
+  const recent = payload.lastSync;
+  const recentResults = recent?.results || [];
+  repoEls.repositoryOperationSummary.hidden = !recentResults.length;
+  const count = (outcome) => recentResults.filter((result) => result.outcome === outcome).length;
+  repoEls.repositoryOperationSummary.className = count('failed') || count('skipped') ? 'form-error' : 'field-help';
+  repoEls.repositoryOperationSummary.textContent = recentResults.length ? `最近一次同步：成功 ${count('success')} · 失败 ${count('failed')} · 跳过 ${count('skipped')} · ${recent.finishedAt ? formatTimestamp(recent.finishedAt) : '执行中 / 未完成'}。失败和跳过原因见仓库及下方逐项结果。` : '';
   repoEls.repositorySchedule.textContent = `下次计划：${formatTimestamp(payload.nextCheckAt)}（本机时区） · 检查失败 15 分钟后重试 · 同一仓库只检查一次`;
   repoEls.repositoryAttentionBtn.textContent = `需要处理 ${pending}`;
   repoEls.repositoryPullBtn.textContent = `待拉取 ${pulls.length}`;
@@ -1081,6 +1087,12 @@ function renderRepositorySync(payload) {
     if (repositoryNeedsAttention(repo)) {
       const guidance = document.createElement('p'); guidance.className = 'repository-guidance'; guidance.textContent = repositoryActionGuidance(repo); info.appendChild(guidance);
     }
+    if (repo.lastSyncResult) {
+      const last = document.createElement('p');
+      last.className = ['failed', 'skipped'].includes(repo.lastSyncResult.outcome) ? 'form-error' : 'field-help';
+      last.textContent = `上次同步（${formatTimestamp(repo.lastSyncResult.at)}）· ${{ success: '成功', failed: '失败', skipped: '跳过' }[repo.lastSyncResult.outcome] || repo.lastSyncResult.outcome}：${repo.lastSyncResult.detail}`;
+      info.appendChild(last);
+    }
     info.appendChild(checked);
     if (repo.error) { const error = document.createElement('p'); error.className = 'form-error'; error.textContent = repo.error; info.appendChild(error); }
     const buttons = document.createElement('div'); buttons.className = 'repository-actions';
@@ -1097,9 +1109,16 @@ function renderRepositorySync(payload) {
   if (repositories.length && !displayed.length) { const empty = document.createElement('p'); empty.className = 'repository-empty'; empty.textContent = repositoryView === 'pull' ? '目前没有待拉取的仓库。' : repositoryView === 'push' ? '目前没有待推送的仓库。' : '目前没有需要处理的仓库。'; repoEls.repositoryList.appendChild(empty); }
   if (!repositories.length) { const empty = document.createElement('p'); empty.className = 'field-help'; empty.textContent = '当前项目中没有可识别的 Git 仓库。'; repoEls.repositoryList.appendChild(empty); }
   repoEls.repositoryResults.replaceChildren();
-  for (const result of payload.results || []) {
-    const line = document.createElement('p'); line.className = result.outcome === 'failed' ? 'form-error' : 'field-help';
-    line.textContent = `${result.name} · ${{ checked: '已检查', success: '成功', skipped: '跳过', failed: '失败' }[result.outcome]}：${result.detail}`; repoEls.repositoryResults.appendChild(line);
+  const resultGroups = [];
+  if (recentResults.length) resultGroups.push(['最近一次同步结果', recentResults]);
+  if (payload.operation === 'check' || !recentResults.length) resultGroups.push([payload.operation === 'check' ? '最近一次检查结果' : '最近一次操作结果', payload.results || []]);
+  for (const [title, results] of resultGroups) {
+    if (!results.length) continue;
+    const heading = document.createElement('h3'); heading.textContent = title; repoEls.repositoryResults.appendChild(heading);
+    for (const result of results) {
+      const line = document.createElement('p'); line.className = ['failed', 'skipped'].includes(result.outcome) ? 'form-error' : 'field-help';
+      line.textContent = `${result.name} · ${{ checked: '已检查', success: '成功', skipped: '跳过', failed: '失败' }[result.outcome]}：${result.detail}`; repoEls.repositoryResults.appendChild(line);
+    }
   }
 }
 async function readRepositorySync() {

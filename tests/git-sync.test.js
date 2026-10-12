@@ -180,3 +180,49 @@ test('bulk pull and push select only scanned matching direction and still rechec
   assert.deepEqual(pushed.results.map((item) => item.outcome), ['success']);
   assert.equal(git(push.remote, 'rev-parse', 'main'), git(push.one, 'rev-parse', 'HEAD'));
 });
+
+test('a pull that becomes diverged reports the skipped reason through later scans and restart', async () => {
+  const blocked = fixture('report-diverged'); const healthy = fixture('report-healthy');
+  commit(blocked.two, 'remote.txt', 'remote'); git(blocked.two, 'push');
+  commit(healthy.two, 'remote.txt', 'healthy'); git(healthy.two, 'push');
+  const options = { getProjects: () => [blocked, healthy].map((f, index) => ({ key: String(index), projectDir: f.one })) };
+  const service = manager(blocked, options);
+  await run(service, 'check');
+  commit(blocked.one, 'local.txt', 'local-after-scan');
+  const localHead = git(blocked.one, 'rev-parse', 'HEAD');
+  const state = await run(service, 'sync');
+  assert.deepEqual(state.lastSync.results.map((item) => item.outcome), ['skipped', 'success']);
+  assert.match(state.lastSync.results[0].detail, /分叉/);
+  assert.equal(state.repositories[0].lastSyncResult.outcome, 'skipped');
+  assert.equal(git(blocked.one, 'rev-parse', 'HEAD'), localHead);
+  const recorded = state.lastSync;
+  const result = state.repositories[0].lastSyncResult;
+  const checked = await run(service, 'check');
+  assert.deepEqual(checked.lastSync, recorded);
+  assert.deepEqual(checked.repositories[0].lastSyncResult, result);
+  const restarted = manager(blocked, options); await restarted.discover();
+  assert.deepEqual(restarted.snapshot().lastSync, recorded);
+  assert.deepEqual(restarted.snapshot().repositories[0].lastSyncResult, result);
+});
+
+test('Git command failures preserve the final error, redact credentials and survive checks and restart', async () => {
+  const f = fixture('report-command-failure');
+  commit(f.one, 'local.txt', 'local');
+  const previous = git(f.remote, 'rev-parse', 'main');
+  const hook = path.join(f.remote, 'hooks/pre-receive');
+  fs.writeFileSync(hook, '#!/bin/sh\nprintf "%s\\n" "https://user:secret@example.invalid/repo" >&2\ni=0\nwhile [ "$i" -lt 500 ]; do printf "progress output %s\\n" "$i" >&2; i=$((i+1)); done\nprintf "%s\\n" "fatal: final rejection reason" >&2\nexit 1\n', { mode: 0o755 });
+  const service = manager(f);
+  const state = await run(service, 'push');
+  assert.equal(state.lastSync.results[0].outcome, 'failed');
+  const detail = state.lastSync.results[0].detail;
+  assert.match(detail, /git push 失败.*退出码/);
+  assert.match(detail, /final rejection reason/);
+  assert.ok(!detail.includes('user:secret'));
+  assert.match(detail, /输出已截断/);
+  assert.equal(git(f.remote, 'rev-parse', 'main'), previous);
+  const checked = await run(service, 'check');
+  assert.equal(checked.repositories[0].error, '');
+  assert.equal(checked.repositories[0].lastSyncResult.detail, detail);
+  const restarted = manager(f);
+  assert.equal(restarted.snapshot().lastSync.results[0].detail, detail);
+});

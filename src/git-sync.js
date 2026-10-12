@@ -7,7 +7,13 @@ function git(directory, args) {
   return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args], {
     timeout: 45000, maxBuffer: 2 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes -o ConnectTimeout=10' },
-  }, (error, stdout, stderr) => error ? reject(new Error((stderr || error.message).trim().replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1***@').slice(0, 1200))) : resolve(stdout.trim())));
+  }, (error, stdout, stderr) => error ? reject(new Error(gitFailure(args[0], error, stdout, stderr))) : resolve(stdout.trim())));
+}
+function gitFailure(command, error, stdout, stderr) {
+  const output = [stderr, stdout].filter((value) => value?.trim()).join('\n').trim() || error.message;
+  const safe = output.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1***@');
+  const detail = safe.length > 4000 ? `${safe.slice(0, 1800)}\n…输出已截断…\n${safe.slice(-1800)}` : safe;
+  return `git ${command} 失败（${error.killed ? '执行超时或被终止' : `退出码 ${error.code}`}）：${detail}`;
 }
 async function optionalGit(directory, args) { try { return await git(directory, args); } catch { return ''; } }
 function dailySlot(date = new Date()) {
@@ -40,7 +46,7 @@ function canProcess(repo, kind) {
 function createGitSync({ statePath, getProjects, now = () => new Date() }) {
   let state;
   try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { state = {}; }
-  state = { repositories: [], lastAttemptAt: null, completedSlot: null, ...state, busy: false, results: [] };
+  state = { repositories: [], results: [], lastSync: null, lastAttemptAt: null, completedSlot: null, ...state, busy: false };
   let timer = null, job = null, stopped = false;
   const save = () => {
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -106,11 +112,17 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
           } catch (error) { outcome = 'failed'; detail = error.message; updated = { ...updated, status: 'error', error: detail }; }
         }
       }
+      const result = { key: repo.key, name: repo.name, outcome, detail };
+      if (kind !== 'check') updated.lastSyncResult = { ...result, operation: kind, at: now().toISOString() };
       state.repositories = state.repositories.map((item) => item.key === repo.key ? updated : item);
-      state.results.push({ key: repo.key, name: repo.name, outcome, detail }); save();
+      state.results.push(result);
+      if (kind !== 'check') state.lastSync = { operation: kind, results: [...state.results], finishedAt: null };
+      save();
     }
     if (kind === 'check' && keys === undefined && !state.repositories.some((repo) => repo.error) && !stopped) state.completedSlot = slot;
-    state.currentRepository = ''; state.lastFinishedAt = now().toISOString(); state.scheduled = scheduled; save();
+    state.currentRepository = ''; state.lastFinishedAt = now().toISOString(); state.scheduled = scheduled;
+    if (kind !== 'check' && selected.length) state.lastSync = { operation: kind, results: [...state.results], finishedAt: state.lastFinishedAt };
+    save();
   }
   function request(kind = 'check', keys, scheduled = false) {
     if (job) return snapshot();

@@ -1,0 +1,45 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const source = fs.readFileSync(path.join(__dirname, '../src/renderer.js'), 'utf8');
+const render = source.slice(source.indexOf('const repositoryLabels ='), source.indexOf('async function readRepositorySync()'));
+function element() {
+  return { children: [], textContent: '', className: '', dataset: {}, style: { setProperty() {} }, classList: { toggle() {} },
+    append(...items) { this.children.push(...items); }, appendChild(item) { this.children.push(item); },
+    replaceChildren() { this.children = []; }, setAttribute() {}, addEventListener() {} };
+}
+function fixture() {
+  const repoEls = new Proxy({}, { get(target, name) { return target[name] ||= element(); } });
+  const context = vm.createContext({ repoEls, document: { createElement: element }, repositoryView: 'all',
+    updateRepositoryIndicators() {}, formatTimestamp: (value) => value || '-', runRepositoryAction() {} });
+  vm.runInContext(render + '\n' + source.slice(source.indexOf('function repositoryNeedsAttention(')), context);
+  return { repoEls, render: (payload) => context.renderRepositorySync(payload) };
+}
+function texts(node) { return [node.textContent, ...node.children.flatMap(texts)].filter(Boolean).join('\n'); }
+
+test('repository UI keeps sync failure and skipped causes visible after a fresh scan', () => {
+  const f = fixture();
+  const failed = { key: 'mac-tool', name: 'mac-tool', outcome: 'failed', detail: 'git merge 失败：final rejection reason' };
+  const skipped = { key: 'other', name: 'other', outcome: 'skipped', detail: '分支已分叉，需要先处理合并' };
+  const payload = { operation: 'check', repositories: [{ key: 'mac-tool', name: 'mac-tool', services: [], status: 'synced', directory: '/tmp/mac-tool', lastSyncResult: { ...failed, at: 'earlier' } }],
+    lastSync: { results: [failed, skipped], finishedAt: 'earlier' }, results: [{ key: 'mac-tool', name: 'mac-tool', outcome: 'checked', detail: '最新检查完成' }] };
+  f.render(payload);
+  assert.equal(f.repoEls.repositoryOperationSummary.hidden, false);
+  assert.match(f.repoEls.repositoryOperationSummary.textContent, /失败 1.*跳过 1/);
+  assert.match(texts(f.repoEls.repositoryList), /final rejection reason/);
+  assert.match(texts(f.repoEls.repositoryResults), /final rejection reason/);
+  assert.match(texts(f.repoEls.repositoryResults), /分支已分叉/);
+  assert.match(texts(f.repoEls.repositoryResults), /最新检查完成/);
+  f.render({ ...payload, results: [{ name: 'mac-tool', outcome: 'failed', detail: '新的 fetch 错误' }] });
+  assert.match(texts(f.repoEls.repositoryResults), /新的 fetch 错误/);
+  assert.match(texts(f.repoEls.repositoryResults), /final rejection reason/);
+});
+
+test('legacy snapshots render current failures without requiring sync history', () => {
+  const f = fixture();
+  f.render({ operation: 'pull', repositories: [], results: [{ name: 'mac-tool', outcome: 'failed', detail: '旧格式错误' }] });
+  assert.match(texts(f.repoEls.repositoryResults), /旧格式错误/);
+  assert.equal(f.repoEls.repositoryOperationSummary.hidden, true);
+});
