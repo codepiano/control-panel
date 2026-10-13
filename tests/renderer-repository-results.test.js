@@ -43,3 +43,9 @@ test('legacy snapshots render current failures without requiring sync history', 
   assert.match(texts(f.repoEls.repositoryResults), /旧格式错误/);
   assert.equal(f.repoEls.repositoryOperationSummary.hidden, true);
 });
+
+test('concurrent checks show active repositories and completed progress', () => {
+  const f = fixture();
+  f.render({ busy: true, operation: 'check', currentRepository: 'one、two', progress: { completed: 3, total: 8 }, repositories: [], results: [] });
+  assert.match(f.repoEls.repositorySyncStatus.textContent, /正在检查：one、two.*已完成 3\/8/);
+});

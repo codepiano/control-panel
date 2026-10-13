@@ -43,10 +43,11 @@ function canProcess(repo, kind) {
   const push = repo.status === 'ahead' && repo.ahead > 0 && !repo.behind;
   return kind === 'pull' ? pull : kind === 'push' ? push : pull || push;
 }
-function createGitSync({ statePath, getProjects, now = () => new Date() }) {
+function createGitSync({ statePath, getProjects, now = () => new Date(), checkConcurrency = 4 }) {
+  if (!Number.isInteger(checkConcurrency) || checkConcurrency < 1 || checkConcurrency > 16) throw new Error('检查并发数应为 1–16');
   let state;
   try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { state = {}; }
-  state = { repositories: [], results: [], lastSync: null, lastAttemptAt: null, completedSlot: null, ...state, busy: false };
+  state = { repositories: [], results: [], lastSync: null, lastAttemptAt: null, completedSlot: null, ...state, busy: false, currentRepository: '', progress: null };
   let timer = null, job = null, discoveryJob = null, stopped = false, discoverySignature = '';
   const save = () => {
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -70,7 +71,8 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
       const key = crypto.createHash('sha256').update(canonical).digest('hex');
       if (!repositories.has(key)) {
         const previous = state.repositories.find((item) => item.key === key);
-        repositories.set(key, { ...previous, key, directory: canonical, name: path.basename(canonical), services: [], checkedAt: previous?.checkedAt || null, status: previous?.status || 'unchecked' });
+        const commonDirectory = await optionalGit(source, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+        repositories.set(key, { ...previous, key, directory: canonical, commonDirectory: commonDirectory ? fs.realpathSync(commonDirectory) : canonical, name: path.basename(canonical), services: [], checkedAt: previous?.checkedAt || null, status: previous?.status || 'unchecked' });
       }
       repositories.get(key).services.push({ key: project.key, name: project.name, ancestors: project.ancestors || [] });
     }
@@ -98,35 +100,60 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
     const selected = keys === undefined ? (kind !== 'check' ? state.repositories.filter((repo) => canProcess(repo, kind)) : scheduled && (retry || completed) ? state.repositories.filter((repo) => repo.error || !repo.checkedAt) : state.repositories) : state.repositories.filter((repo) => keys.includes(repo.key));
     if (keys?.some((key) => !selected.some((repo) => repo.key === key))) throw new Error('仓库不属于当前项目列表');
     state.lastAttemptAt = now().toISOString(); state.lastAttemptSlot = dailySlot(now()); state.results = []; state.operation = kind;
+    state.progress = { completed: 0, total: selected.length };
     const slot = dailySlot(now());
-    for (const repo of selected) {
-      if (stopped) break;
-      state.currentRepository = repo.name;
-      let updated = await checkOne(repo);
-      let outcome = updated.error ? 'failed' : 'checked', detail = updated.error || (updated.upstream && updated.remoteUrl ? '远端状态已更新' : '已检查本地状态；没有可同步的跟踪分支');
-      if (kind !== 'check' && !updated.error) {
-        const action = kind === 'sync' ? (updated.behind ? 'pull' : 'push') : kind;
-        const blocked = !updated.branch ? '当前为 detached HEAD' : !updated.upstream || !updated.remoteUrl || !updated.mergeRef.startsWith('refs/heads/') ? '未配置远端跟踪分支' : updated.dirty ? '有未提交修改' : updated.inProgress ? 'Git 操作进行中' : updated.ahead && updated.behind ? '分支已分叉，需要先处理合并' : action === 'push' && updated.behind ? '远端有新提交，请先拉取' : '';
-        if (blocked) { outcome = 'skipped'; detail = blocked; }
-        else if (!(action === 'push' ? updated.ahead : updated.behind)) { outcome = 'skipped'; detail = '无需同步'; }
-        else {
-          try {
-            // Re-read local state immediately before changing the branch or publishing commits.
-            const current = await inspectRepository(repo);
-            if (current.head !== updated.head || current.branch !== updated.branch || current.upstream !== updated.upstream || current.dirty || current.inProgress) throw new Error('仓库状态发生变化，请重新检查');
-            if (action === 'pull') await git(repo.directory, ['merge', '--ff-only', '@{upstream}']);
-            else await git(repo.directory, ['push', '--', current.remote, `HEAD:${current.mergeRef}`]);
-            updated = { ...await inspectRepository(repo), checkedAt: now().toISOString(), error: '' };
-            outcome = 'success'; detail = action === 'pull' ? '已快进更新' : '已推送';
-          } catch (error) { outcome = 'failed'; detail = error.message; updated = { ...updated, status: 'error', error: detail }; }
+    const active = new Map(), results = new Map();
+    const updateActive = () => { state.currentRepository = [...active.values()].join('、'); };
+    async function processOne(repo) {
+      active.set(repo.key, repo.name); updateActive();
+      try {
+        let updated = await checkOne(repo);
+        let outcome = updated.error ? 'failed' : 'checked', detail = updated.error || (updated.upstream && updated.remoteUrl ? '远端状态已更新' : '已检查本地状态；没有可同步的跟踪分支');
+        if (kind !== 'check' && !updated.error) {
+          const action = kind === 'sync' ? (updated.behind ? 'pull' : 'push') : kind;
+          const blocked = !updated.branch ? '当前为 detached HEAD' : !updated.upstream || !updated.remoteUrl || !updated.mergeRef.startsWith('refs/heads/') ? '未配置远端跟踪分支' : updated.dirty ? '有未提交修改' : updated.inProgress ? 'Git 操作进行中' : updated.ahead && updated.behind ? '分支已分叉，需要先处理合并' : action === 'push' && updated.behind ? '远端有新提交，请先拉取' : '';
+          if (blocked) { outcome = 'skipped'; detail = blocked; }
+          else if (!(action === 'push' ? updated.ahead : updated.behind)) { outcome = 'skipped'; detail = '无需同步'; }
+          else {
+            try {
+              // Re-read local state immediately before changing the branch or publishing commits.
+              const current = await inspectRepository(repo);
+              if (current.head !== updated.head || current.branch !== updated.branch || current.upstream !== updated.upstream || current.dirty || current.inProgress) throw new Error('仓库状态发生变化，请重新检查');
+              if (action === 'pull') await git(repo.directory, ['merge', '--ff-only', '@{upstream}']);
+              else await git(repo.directory, ['push', '--', current.remote, `HEAD:${current.mergeRef}`]);
+              updated = { ...await inspectRepository(repo), checkedAt: now().toISOString(), error: '' };
+              outcome = 'success'; detail = action === 'pull' ? '已快进更新' : '已推送';
+            } catch (error) { outcome = 'failed'; detail = error.message; updated = { ...updated, status: 'error', error: detail }; }
+          }
+        }
+        const result = { key: repo.key, name: repo.name, outcome, detail };
+        if (kind !== 'check') updated.lastSyncResult = { ...result, operation: kind, at: now().toISOString() };
+        state.repositories = state.repositories.map((item) => item.key === repo.key ? updated : item);
+        results.set(repo.key, result);
+        state.results = selected.map((item) => results.get(item.key)).filter(Boolean);
+        state.progress.completed = results.size;
+        if (kind !== 'check') state.lastSync = { operation: kind, results: [...state.results], finishedAt: null };
+        save();
+      } finally { active.delete(repo.key); updateActive(); }
+    }
+    if (kind === 'check') {
+      let next = 0;
+      const locks = new Map();
+      async function worker() {
+        while (!stopped && next < selected.length) {
+          const repo = selected[next++];
+          // Worktrees share refs and fetch locks, so their checks must not overlap.
+          const previous = locks.get(repo.commonDirectory) || Promise.resolve();
+          const pending = previous.catch(() => {}).then(() => { if (!stopped) return processOne(repo); });
+          locks.set(repo.commonDirectory, pending);
+          await pending;
         }
       }
-      const result = { key: repo.key, name: repo.name, outcome, detail };
-      if (kind !== 'check') updated.lastSyncResult = { ...result, operation: kind, at: now().toISOString() };
-      state.repositories = state.repositories.map((item) => item.key === repo.key ? updated : item);
-      state.results.push(result);
-      if (kind !== 'check') state.lastSync = { operation: kind, results: [...state.results], finishedAt: null };
-      save();
+      const workers = await Promise.allSettled(Array.from({ length: Math.min(checkConcurrency, selected.length) }, worker));
+      const failure = workers.find((result) => result.status === 'rejected');
+      if (failure) throw failure.reason;
+    } else {
+      for (const repo of selected) { if (stopped) break; await processOne(repo); }
     }
     if (kind === 'check' && keys === undefined) state.completedSlot = !state.repositories.some((repo) => repo.error) && !stopped ? slot : null;
     state.currentRepository = ''; state.lastFinishedAt = now().toISOString(); state.scheduled = scheduled;
@@ -135,8 +162,8 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
   }
   function request(kind = 'check', keys, scheduled = false) {
     if (job) return snapshot();
-    state.busy = true; state.operation = kind; state.currentRepository = '';
-    job = execute(kind, keys, scheduled).catch((error) => { state.error = error.message; }).finally(() => { state.busy = false; job = null; save(); });
+    state.busy = true; state.operation = kind; state.currentRepository = ''; state.progress = null;
+    job = execute(kind, keys, scheduled).catch((error) => { state.error = error.message; }).finally(() => { state.busy = false; state.currentRepository = ''; job = null; save(); });
     state.error = '';
     return snapshot();
   }

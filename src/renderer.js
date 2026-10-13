@@ -1054,6 +1054,7 @@ function renderRepositorySync(payload) {
   repoEls.syncAllRepositoriesBtn.title = '只处理已扫描确认可拉取或推送的仓库，其它仓库不检查；执行前复核所选仓库状态';
   repoEls.checkRepositoriesBtn.textContent = payload.busy ? '仓库处理中…' : '检查仓库同步';
   repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : payload.operation === 'sync' ? '同步' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
+  if (payload.busy && payload.progress && !payload.error) repoEls.repositorySyncStatus.textContent += ` · 已完成 ${payload.progress.completed}/${payload.progress.total}`;
   const recent = payload.lastSync;
   const recentResults = recent?.results || [];
   repoEls.repositoryOperationSummary.hidden = !recentResults.length;
