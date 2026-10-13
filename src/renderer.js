@@ -65,7 +65,7 @@ function restoreModalFocus() {
   const target = modalReturnFocus;
   modalReturnFocus = null;
   if (target && target.isConnected) {
-    target.focus();
+    target.focus({ preventScroll: true });
   }
 }
 
