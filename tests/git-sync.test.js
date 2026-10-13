@@ -165,6 +165,50 @@ test('bulk sync does not fetch synced or newly discovered unchecked repositories
   assert.equal(newRepo.status, 'unchecked'); assert.equal(newRepo.checkedAt, null);
 });
 
+test('newly registered repositories are discovered and checked after the daily scan already completed', async () => {
+  const existing = fixture('discovery-existing'); const added = fixture('discovery-added');
+  const date = new Date(2026, 9, 13, 10, 0);
+  let projects = [{ key: 'existing', projectDir: existing.one }];
+  const service = manager(existing, { now: () => date, getProjects: () => projects });
+  await run(service, 'check');
+  const previous = service.snapshot().repositories[0];
+  commit(added.one, 'local.txt', 'unpublished');
+  projects.push({ key: 'added', projectDir: added.one });
+  await service.refresh();
+  assert.equal(service.snapshot().repositories.length, 2);
+  assert.equal(service.snapshot().repositories[1].status, 'unchecked');
+  assert.equal(service.snapshot().busy, false); // autoStart is disabled in this fixture.
+  service.tick();
+  const state = await service.wait();
+  assert.equal(state.busy, false);
+  assert.equal(state.repositories[1].status, 'ahead');
+  assert.equal(state.repositories[1].ahead, 1);
+  assert.deepEqual(state.repositories[0], previous);
+  assert.deepEqual(state.results.map((item) => item.key), [state.repositories[1].key]);
+  assert.equal(git(added.remote, 'rev-parse', 'main'), git(added.one, 'rev-parse', 'HEAD~1'));
+});
+
+test('a new repository failing after a completed scan still retries with backoff', async () => {
+  const existing = fixture('new-retry-existing'); const added = fixture('new-retry-added');
+  let date = new Date(2026, 9, 13, 10, 0);
+  const projects = [{ key: 'existing', projectDir: existing.one }];
+  const service = manager(existing, { now: () => date, getProjects: () => projects });
+  await run(service, 'check');
+  git(added.one, 'remote', 'set-url', 'origin', path.join(added.root, 'missing.git'));
+  projects.push({ key: 'added', projectDir: added.one });
+  await service.refresh(); service.tick();
+  const failed = await service.wait();
+  assert.equal(failed.completedSlot, null);
+  assert.equal(failed.repositories[1].status, 'error');
+  service.tick(); assert.equal(service.snapshot().busy, false);
+  git(added.one, 'remote', 'set-url', 'origin', added.remote);
+  date = new Date(2026, 9, 13, 10, 16); service.tick();
+  const retried = await service.wait();
+  assert.equal(retried.repositories[1].error, '');
+  assert.equal(retried.completedSlot, dailySlot(date));
+  assert.deepEqual(retried.results.map((item) => item.key), [retried.repositories[1].key]);
+});
+
 test('bulk pull and push select only scanned matching direction and still recheck local changes', async () => {
   const pull = fixture('bulk-direction-pull'); const push = fixture('bulk-direction-push');
   commit(pull.two, 'remote.txt', 'pull'); git(pull.two, 'push');

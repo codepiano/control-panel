@@ -1461,7 +1461,10 @@ async function startConfiguredProjects() {
 }
 
 function registerActions() {
-  registerAction('get-repository-sync', () => gitSync.snapshot());
+  registerAction('get-repository-sync', async () => {
+    await gitSync.refresh();
+    return gitSync.snapshot();
+  });
   registerAction('check-repositories', (keys) => gitSync.request('check', keys));
   registerAction('sync-repositories', (kind, keys) => {
     if (!['pull', 'push', 'sync'].includes(kind)) throw new Error('只支持拉取、推送或处理全部');

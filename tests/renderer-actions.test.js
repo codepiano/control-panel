@@ -59,3 +59,10 @@ test('buttons follow the latest service state after an action', async () => {
   assert.equal(f.button.disabled, false);
   assert.equal(f.button.textContent, '停止');
 });
+
+test('new unchecked repositories appear in the attention list', () => {
+  const context = vm.createContext({});
+  vm.runInContext(source.slice(source.indexOf('function repositoryNeedsAttention('), source.indexOf('function repositoryStatusText(')), context);
+  assert.equal(context.repositoryNeedsAttention({ status: 'unchecked' }), true);
+  assert.equal(context.repositoryNeedsAttention({ status: 'synced' }), false);
+});

@@ -41,14 +41,21 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
   let state;
   try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { state = {}; }
   state = { repositories: [], lastAttemptAt: null, completedSlot: null, ...state, busy: false, results: [] };
-  let timer = null, job = null, stopped = false;
+  let timer = null, job = null, discoveryJob = null, stopped = false, discoverySignature = '';
   const save = () => {
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(`${statePath}.tmp`, JSON.stringify({ ...state, busy: false }, null, 2)); fs.renameSync(`${statePath}.tmp`, statePath);
   };
-  async function discover() {
+  function discover(options) {
+    if (!discoveryJob) discoveryJob = discoverRepositories(options).finally(() => { discoveryJob = null; });
+    return discoveryJob;
+  }
+  async function discoverRepositories({ force = false } = {}) {
+    const projects = getProjects();
+    const signature = JSON.stringify(projects.map(({ key, name, projectDir, workingDirectory, manifestPath, ancestors }) => ({ key, name, projectDir, workingDirectory, manifestPath, ancestors })));
+    if (!force && signature === discoverySignature) return;
     const repositories = new Map();
-    for (const project of getProjects()) {
+    for (const project of projects) {
       const source = project.projectDir || project.workingDirectory || (project.manifestPath && path.dirname(project.manifestPath));
       if (!source) continue;
       const directory = await optionalGit(source, ['rev-parse', '--show-toplevel']);
@@ -62,6 +69,7 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
       repositories.get(key).services.push({ key: project.key, name: project.name, ancestors: project.ancestors || [] });
     }
     state.repositories = [...repositories.values()];
+    discoverySignature = signature;
   }
   const snapshot = () => JSON.parse(JSON.stringify({ ...state, schedule: '03:00', nextCheckAt: (() => { const next = new Date(now()); next.setHours(3, 0, 0, 0); if (next <= now()) next.setDate(next.getDate() + 1); return next.toISOString(); })() }));
   async function checkOne(repo) {
@@ -78,9 +86,10 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
   async function execute(kind, keys, scheduled = false) {
     if (!['check', 'pull', 'push', 'sync'].includes(kind)) throw new Error('未知仓库操作');
     if (keys !== undefined && (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string'))) throw new Error('仓库参数应为数组');
-    await discover();
+    await discover({ force: true });
     const retry = scheduled && state.lastAttemptSlot === dailySlot(now()) && state.repositories.some((repo) => repo.error);
-    const selected = keys === undefined ? (kind !== 'check' ? state.repositories.filter((repo) => canProcess(repo, kind)) : retry ? state.repositories.filter((repo) => repo.error) : state.repositories) : state.repositories.filter((repo) => keys.includes(repo.key));
+    const completed = state.completedSlot === dailySlot(now());
+    const selected = keys === undefined ? (kind !== 'check' ? state.repositories.filter((repo) => canProcess(repo, kind)) : scheduled && (retry || completed) ? state.repositories.filter((repo) => repo.error || !repo.checkedAt) : state.repositories) : state.repositories.filter((repo) => keys.includes(repo.key));
     if (keys?.some((key) => !selected.some((repo) => repo.key === key))) throw new Error('仓库不属于当前项目列表');
     state.lastAttemptAt = now().toISOString(); state.lastAttemptSlot = dailySlot(now()); state.results = []; state.operation = kind;
     const slot = dailySlot(now());
@@ -109,7 +118,7 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
       state.repositories = state.repositories.map((item) => item.key === repo.key ? updated : item);
       state.results.push({ key: repo.key, name: repo.name, outcome, detail }); save();
     }
-    if (kind === 'check' && keys === undefined && !state.repositories.some((repo) => repo.error) && !stopped) state.completedSlot = slot;
+    if (kind === 'check' && keys === undefined) state.completedSlot = !state.repositories.some((repo) => repo.error) && !stopped ? slot : null;
     state.currentRepository = ''; state.lastFinishedAt = now().toISOString(); state.scheduled = scheduled; save();
   }
   function request(kind = 'check', keys, scheduled = false) {
@@ -120,12 +129,14 @@ function createGitSync({ statePath, getProjects, now = () => new Date() }) {
     return snapshot();
   }
   function tick() {
-    if (stopped || job || state.completedSlot === dailySlot(now())) return;
-    if (state.lastAttemptSlot === dailySlot(now()) && state.lastAttemptAt && now() - new Date(state.lastAttemptAt) < 15 * 60 * 1000) return;
+    const unchecked = state.repositories.some((repo) => !repo.checkedAt);
+    if (stopped || job || (state.completedSlot === dailySlot(now()) && !unchecked)) return;
+    if (!unchecked && state.lastAttemptSlot === dailySlot(now()) && state.lastAttemptAt && now() - new Date(state.lastAttemptAt) < 15 * 60 * 1000) return;
     request('check', undefined, true);
   }
   return {
     snapshot, request, discover, tick,
+    refresh: async () => { if (!job) { await discover(); if (timer) tick(); } },
     wait: async () => { if (job) await job; return snapshot(); },
     start: () => { stopped = false; tick(); timer = setInterval(tick, 60000); timer.unref(); },
     stop: () => { stopped = true; clearInterval(timer); timer = null; },

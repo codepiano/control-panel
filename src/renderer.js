@@ -1148,7 +1148,7 @@ function updateRepositoryIndicators() {
 }
 
 function repositoryNeedsAttention(repo) {
-  return Boolean(repo.dirty || repo.ahead || repo.behind || repo.inProgress || ['error', 'diverged', 'untracked', 'detached'].includes(repo.status));
+  return Boolean(repo.dirty || repo.ahead || repo.behind || repo.inProgress || ['unchecked', 'error', 'diverged', 'untracked', 'detached'].includes(repo.status));
 }
 function repositoryStatusText(repo) {
   const parts = [];
