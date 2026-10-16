@@ -33,9 +33,13 @@ async function inspectRepository(repo) {
   let ahead = 0, behind = 0;
   if (upstream) [ahead, behind] = (await git(directory, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])).split(/\s+/).map(Number);
   const remoteUrl = remote && remote !== '.' ? await optionalGit(directory, ['remote', 'get-url', remote]) : '';
-  const status = !branch ? 'detached' : !upstream || !remoteUrl ? 'untracked' : ahead && behind ? 'diverged' : behind ? 'behind' : ahead ? 'ahead' : 'synced';
   const head = await optionalGit(directory, ['rev-parse', 'HEAD']);
-  return { ...repo, head, branch, dirty, inProgress, upstream, remote, mergeRef, ahead, behind, status, remoteUrl: remoteUrl.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1***@') };
+  const superproject = await optionalGit(directory, ['rev-parse', '--show-superproject-working-tree']);
+  const gitlink = superproject ? await git(superproject, ['ls-files', '--stage', '--', path.relative(fs.realpathSync(superproject), fs.realpathSync(directory))]) : '';
+  const pinnedCommit = gitlink.match(/^160000 ([0-9a-f]+) 0\t/)?.[1] || '';
+  const pinned = !branch && Boolean(pinnedCommit && pinnedCommit === head);
+  const status = !branch ? (pinned ? 'pinned' : 'detached') : !upstream || !remoteUrl ? 'untracked' : ahead && behind ? 'diverged' : behind ? 'behind' : ahead ? 'ahead' : 'synced';
+  return { ...repo, head, superproject, pinnedCommit, branch, dirty, inProgress, upstream, remote, mergeRef, ahead, behind, status, remoteUrl: remoteUrl.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1***@') };
 }
 function canProcess(repo, kind) {
   if (!repo.checkedAt || !repo.branch || !repo.upstream || !repo.remoteUrl || !repo.mergeRef?.startsWith('refs/heads/') || repo.error || repo.dirty || repo.inProgress) return false;
@@ -108,7 +112,7 @@ function createGitSync({ statePath, getProjects, now = () => new Date(), checkCo
       active.set(repo.key, repo.name); updateActive();
       try {
         let updated = await checkOne(repo);
-        let outcome = updated.error ? 'failed' : 'checked', detail = updated.error || (updated.upstream && updated.remoteUrl ? '远端状态已更新' : '已检查本地状态；没有可同步的跟踪分支');
+        let outcome = updated.error ? 'failed' : 'checked', detail = updated.error || (updated.status === 'pinned' ? '子模块与父仓库指定版本一致，无需单独拉取或推送' : updated.upstream && updated.remoteUrl ? '远端状态已更新' : '已检查本地状态；没有可同步的跟踪分支');
         if (kind !== 'check' && !updated.error) {
           const action = kind === 'sync' ? (updated.behind ? 'pull' : 'push') : kind;
           const blocked = !updated.branch ? '当前为 detached HEAD' : !updated.upstream || !updated.remoteUrl || !updated.mergeRef.startsWith('refs/heads/') ? '未配置远端跟踪分支' : updated.dirty ? '有未提交修改' : updated.inProgress ? 'Git 操作进行中' : updated.ahead && updated.behind ? '分支已分叉，需要先处理合并' : action === 'push' && updated.behind ? '远端有新提交，请先拉取' : '';

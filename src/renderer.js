@@ -1029,7 +1029,7 @@ function openRepositorySync(view = 'attention') {
 function closeRepositorySync() {
   repoEls.repositorySyncModal.classList.add('hidden'); repoEls.repositorySyncModal.setAttribute('aria-hidden', 'true'); restoreModalFocus();
 }
-const repositoryLabels = { unchecked: '尚未检查', synced: '已同步', ahead: '待推送', behind: '待拉取', diverged: '已分叉', untracked: '无跟踪分支', detached: '游离分支', error: '检查失败' };
+const repositoryLabels = { unchecked: '尚未检查', synced: '已同步', ahead: '待推送', behind: '待拉取', diverged: '已分叉', untracked: '无跟踪分支', detached: '未关联本地分支', pinned: '子模块版本正常', error: '检查失败' };
 function renderRepositorySync(payload) {
   repositoryPayload = payload;
   updateRepositoryIndicators();
@@ -1078,14 +1078,14 @@ function renderRepositorySync(payload) {
     row.style.setProperty('--repository-depth', Math.min(depth, 5));
     const info = document.createElement('div'); info.className = 'repository-info';
     const name = document.createElement('h3'); name.textContent = repo.name;
-    const branch = document.createElement('span'); branch.className = 'repository-branch'; branch.textContent = repo.branch ? `${repo.branch} → ${repo.upstream || '未配置跟踪分支'}` : '等待检查分支';
+    const branch = document.createElement('span'); branch.className = 'repository-branch'; branch.textContent = repo.branch ? `${repo.branch} → ${repo.upstream || '未配置跟踪分支'}` : repo.status === 'pinned' ? `由父仓库管理 · ${repo.head.slice(0, 8)}` : repo.checkedAt ? '当前未关联本地分支' : '等待检查分支';
     const directory = document.createElement('p'); directory.className = 'repository-directory'; directory.textContent = repo.directory;
     const status = document.createElement('p'); status.className = `repository-state state-${repo.status}`;
     status.classList.toggle('needs-attention', repositoryNeedsAttention(repo));
     status.textContent = repositoryStatusText(repo);
     const checked = document.createElement('p'); checked.className = 'field-help'; checked.textContent = `最后检查：${formatTimestamp(repo.checkedAt)}`;
     info.append(name, branch, directory, status);
-    if (repositoryNeedsAttention(repo)) {
+    if (repositoryNeedsAttention(repo) || repo.status === 'pinned') {
       const guidance = document.createElement('p'); guidance.className = 'repository-guidance'; guidance.textContent = repositoryActionGuidance(repo); info.appendChild(guidance);
     }
     if (repo.lastSyncResult) {
@@ -1183,7 +1183,8 @@ function repositoryActionGuidance(repo) {
   if (repo.error || repo.status === 'error') actions.push('检查失败：查看下方原因，处理后重新检查');
   if (repo.inProgress) actions.push('先在项目中完成或取消正在进行的 Git 操作');
   if (repo.dirty) actions.push(`先在项目中检查并提交或暂存 ${repo.dirty} 项改动，再进行同步`);
-  if (repo.status === 'detached') actions.push('先切换到需要同步的本地分支');
+  if (repo.status === 'pinned') actions.push('版本与父仓库一致，无需操作；更新由父仓库统一管理');
+  if (repo.status === 'detached') actions.push(repo.superproject ? '子模块版本与父仓库记录不一致，请检查父仓库的子模块变更' : '当前代码未关联本地分支，请先确认需要使用的分支');
   else if (repo.status === 'untracked') actions.push('先为当前分支配置远端跟踪分支');
   else if (repo.status === 'diverged' || (repo.ahead && repo.behind)) actions.push(`本地 ${repo.ahead} 个、远端 ${repo.behind} 个提交：先在项目中合并或变基，解决冲突后再推送`);
   else if (repo.behind) actions.push(`远端有 ${repo.behind} 个新提交：${repo.dirty || repo.inProgress || repo.error ? '处理上述问题后再拉取' : '点击「拉取」更新本机代码'}`);

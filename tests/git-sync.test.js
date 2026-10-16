@@ -353,3 +353,26 @@ test('Git command failures preserve the final error, redact credentials and surv
   const restarted = manager(f);
   assert.equal(restarted.snapshot().lastSync.results[0].detail, detail);
 });
+
+test('detached submodules matching the parent are pinned; changed versions and standalone detached heads remain actionable', async () => {
+  const f = fixture('pinned-submodule');
+  const child = path.join(f.two, 'child');
+  git(f.two, '-c', 'protocol.file.allow=always', 'submodule', 'add', f.remote, 'child');
+  git(f.two, 'commit', '-am', 'add submodule');
+  git(child, 'checkout', '--detach');
+  const { inspectRepository } = require('../src/git-sync');
+  const pinned = await inspectRepository({ directory: child });
+  assert.equal(pinned.status, 'pinned');
+  assert.equal(pinned.head, pinned.pinnedCommit);
+  assert.equal(pinned.dirty, 0);
+  fs.writeFileSync(path.join(child, 'file.txt'), 'local edit');
+  assert.equal((await inspectRepository({ directory: child })).dirty, 1);
+  git(child, 'checkout', '--', 'file.txt');
+  commit(f.one, 'file.txt', 'new version');
+  git(f.one, 'push');
+  git(child, 'fetch');
+  git(child, 'checkout', '--detach', 'origin/main');
+  assert.equal((await inspectRepository({ directory: child })).status, 'detached');
+  git(f.one, 'checkout', '--detach');
+  assert.equal((await inspectRepository({ directory: f.one })).status, 'detached');
+});

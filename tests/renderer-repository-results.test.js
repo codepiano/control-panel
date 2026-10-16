@@ -49,3 +49,16 @@ test('concurrent checks show active repositories and completed progress', () => 
   f.render({ busy: true, operation: 'check', currentRepository: 'one、two', progress: { completed: 3, total: 8 }, repositories: [], results: [] });
   assert.match(f.repoEls.repositorySyncStatus.textContent, /正在检查：one、two.*已完成 3\/8/);
 });
+
+test('pinned submodules explain parent ownership and do not request intervention unless dirty', () => {
+  const f = fixture();
+  const repo = { key: 'child', name: 'child', services: [], status: 'pinned', directory: '/tmp/parent/child', head: 'abcdef123456', checkedAt: 'now' };
+  f.render({ repositories: [repo], results: [] });
+  assert.equal(f.repoEls.repositoryAttentionBtn.textContent, '需要处理 0');
+  assert.match(texts(f.repoEls.repositoryList), /由父仓库管理 · abcdef12/);
+  assert.match(texts(f.repoEls.repositoryList), /无需操作/);
+  assert.doesNotMatch(texts(f.repoEls.repositoryList), /等待检查分支|先切换/);
+  f.render({ repositories: [{ ...repo, dirty: 1 }], results: [] });
+  assert.equal(f.repoEls.repositoryAttentionBtn.textContent, '需要处理 1');
+  assert.match(texts(f.repoEls.repositoryList), /未提交 1 项/);
+});
