@@ -346,7 +346,7 @@ function isPidAlive(pid) {
   }
 }
 
-function launchDetached(command, cwd, projectKey = '') {
+function launchDetached(command, cwd, projectKey = '', timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
     if (!command) { reject(new Error('Missing start command')); return; }
     const logsDir = path.join(USER_DATA, 'service-logs');
@@ -354,19 +354,24 @@ function launchDetached(command, cwd, projectKey = '') {
     const logPath = path.join(logsDir, `${crypto.createHash('sha256').update(projectKey || cwd).digest('hex')}.log`);
     const descriptor = fs.openSync(logPath, 'a');
     let timer;
+    let settled = false;
+    const finish = (error, pid) => { if (settled) return; settled = true; clearTimeout(timer); error ? reject(error) : resolve(pid); };
     let closed = false;
     const closeDescriptor = () => { if (!closed) { fs.closeSync(descriptor); closed = true; } };
     const child = spawn('/bin/zsh', ['-lc', command], { cwd, detached: true, stdio: ['ignore', descriptor, descriptor], env: process.env });
-    child.once('error', (error) => { closeDescriptor(); clearTimeout(timer); reject(error); });
+    child.once('error', (error) => { closeDescriptor(); finish(error); });
     child.once('spawn', () => {
       closeDescriptor();
       child.unref();
-      // A short-lived lifecycle wrapper can report failure; long-running commands remain detached.
-      timer = setTimeout(() => resolve(child.pid), 1500);
+      // Lifecycle wrappers must finish. A live launcher is not confirmation of service startup.
+      timer = setTimeout(() => {
+        child.kill('SIGTERM'); // Only this launcher; service cleanup belongs to the project adapter.
+        finish(new Error(`启动命令超时（${timeoutMs / 1000} 秒）；运行状态需检查，未停止项目服务`));
+      }, timeoutMs);
     });
     child.once('exit', (code, signal) => {
       clearTimeout(timer);
-      if (code === 0) { resolve(child.pid); return; }
+      if (code === 0) { finish(null, child.pid); return; }
       let detail = '';
       try {
         const fd = fs.openSync(logPath, 'r');
@@ -377,7 +382,7 @@ function launchDetached(command, cwd, projectKey = '') {
           detail = buffer.toString('utf8').trim();
         } finally { fs.closeSync(fd); }
       } catch { /* Exit status still explains the failure. */ }
-      reject(new Error(`启动命令退出：${code ?? signal}${detail ? ` · ${detail}` : ''}`));
+      finish(new Error(`启动命令退出：${code ?? signal}${detail ? ` · ${detail}` : ''}`));
     });
   });
 }
@@ -698,6 +703,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     name,
     icon: String(manifest.icon || ''),
     surfaceType: String(manifest.surfaceType || ''),
+    startTimeoutMs: Number.isInteger(manifest.startTimeoutMs) && manifest.startTimeoutMs >= 100 && manifest.startTimeoutMs <= 300000 ? manifest.startTimeoutMs : 60000,
     workingDirectory,
     startCommand,
     stopCommand,
@@ -890,7 +896,7 @@ async function getProjectStatus(project) {
     return {
       status: result.code === 0 ? 'running' : state.status === 'error' ? 'error' : 'stopped',
       pid: state.pid || null,
-      details: result.stdout.trim() || result.stderr.trim() || (state.status === 'error' ? state.lastOutput || '' : ''),
+      details: [result.stdout.trim() || result.stderr.trim(), state.status === 'error' ? `最近操作失败：${state.lastOutput || '未知原因'}` : ''].filter(Boolean).join(' · '),
     };
   }
 
@@ -1037,6 +1043,7 @@ async function startProject(projectKey) {
     return await performProjectStart(projectKey);
   } finally {
     startingProjects.delete(projectKey);
+    await refreshAll();
   }
 }
 
@@ -1058,7 +1065,11 @@ async function performProjectStart(projectKey) {
   await refreshAll();
 
   try {
-    const pid = await launchDetached(project.startCommand, project.workingDirectory, project.key);
+    const pid = await launchDetached(project.startCommand, project.workingDirectory, project.key, project.startTimeoutMs);
+    if (project.statusCommand) {
+      const confirmation = await execCommand(project.statusCommand, project.workingDirectory);
+      if (confirmation.code !== 0) throw new Error(`启动脚本已结束，但状态核验未通过：${confirmation.stdout.trim() || confirmation.stderr.trim() || confirmation.code}`);
+    }
     const usageCount = getUsageCount(project.key) + 1;
     const lastStartedAt = new Date().toISOString();
     projectState[project.key] = {
@@ -1080,14 +1091,14 @@ async function performProjectStart(projectKey) {
 
   const failure = projectState[project.key]?.status === 'error' ? projectState[project.key].lastOutput : '';
   await refreshAll();
-  return failure ? { outcome: 'failed', detail: failure } : { outcome: 'started', detail: '已执行启动，请查看运行状态' };
+  return failure ? { outcome: 'failed', detail: failure } : { outcome: 'started', detail: project.statusCommand ? '启动完成，状态核验通过' : '启动脚本执行完成' };
 }
 
 async function stopProject(projectKey) {
   if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey)) throw new Error('服务正在切换状态，请稍后重试');
   stoppingProjects.add(projectKey);
   try { return await performProjectStop(projectKey); }
-  finally { stoppingProjects.delete(projectKey); }
+  finally { stoppingProjects.delete(projectKey); await refreshAll(); }
 }
 
 async function performProjectStop(projectKey) {
@@ -1155,6 +1166,7 @@ async function performProjectStop(projectKey) {
   }
 
   await refreshAll();
+  if (projectState[project.key]?.status === 'error') throw new Error(projectState[project.key].lastOutput);
 }
 
 async function restartProject(projectKey) {
