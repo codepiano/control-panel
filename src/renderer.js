@@ -319,6 +319,14 @@ async function runProjectAction(button, project, action) {
   }
 }
 
+function closeProjectMenus(target = null) {
+  for (const menu of els.list.querySelectorAll('.project-menu[open]')) {
+    if (target && menu.contains(target)) continue;
+    menu.open = false;
+    openProjectMenus.delete(menu.closest('.card').dataset.key);
+  }
+}
+
 function renderProject(project) {
   const fragment = els.template.content.cloneNode(true);
   const card = fragment.querySelector('.card');
@@ -343,9 +351,16 @@ function renderProject(project) {
   const restartBtn = fragment.querySelector('.restart-btn');
   const homepageBtn = fragment.querySelector('.homepage-btn');
   const repositoryBtn = fragment.querySelector('.repository-btn');
+  const checkRepositoryBtn = fragment.querySelector('.check-repository-btn');
   const folderBtn = fragment.querySelector('.folder-btn');
   const projectConfigBtn = fragment.querySelector('.project-config-btn');
   const projectMenu = fragment.querySelector('.project-menu');
+  projectMenu.addEventListener('click', (event) => {
+    const button = event.target.closest('.project-menu-list button');
+    if (!button || button.disabled) return;
+    projectMenu.open = false;
+    openProjectMenus.delete(project.key);
+  }, { capture: true });
   const panelStartBtn = fragment.querySelector('.panel-start-btn');
   const panelStart = fragment.querySelector('.project-panel-start');
   const projectIconButton = fragment.querySelector('.project-icon-button');
@@ -427,6 +442,12 @@ function renderProject(project) {
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
   homepageBtn.disabled = !(project.frontendUrl || project.homepageUrl || project.openHomepageCommand || project.projectDir);
   repositoryBtn.disabled = !project.projectDir;
+  checkRepositoryBtn.addEventListener('click', async () => {
+    checkRepositoryBtn.disabled = true;
+    try { await checkProjectRepository(project); }
+    catch (error) { showBatchMessage(`检查代码更新失败：${error.message}`); }
+    finally { checkRepositoryBtn.disabled = false; }
+  });
   projectConfigBtn.disabled = !project.manifestPath;
   projectConfigBtn.title = project.manifestPath ? '编辑项目展示信息' : '手工项目没有 control-panel.json，不能在此编辑';
   panelStartBtn.disabled = !project.canStartOnPanelLaunch;
@@ -802,6 +823,7 @@ els.projectEditorForm.addEventListener('submit', async (event) => {
     els.saveProjectEditorBtn.disabled = false;
   }
 });
+document.addEventListener('click', (event) => closeProjectMenus(event.target), { capture: true });
 window.addEventListener('keydown', (event) => {
   const activeModal = !document.getElementById('repositorySyncModal').classList.contains('hidden') ? document.getElementById('repositorySyncModal') : !els.organizationModal.classList.contains('hidden') ? els.organizationModal : !els.projectEditorModal.classList.contains('hidden')
     ? els.projectEditorModal
@@ -813,6 +835,7 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Escape') {
+    closeProjectMenus();
     if (!document.getElementById('repositorySyncModal').classList.contains('hidden')) { closeRepositorySync(); }
     else if (!els.organizationModal.classList.contains('hidden')) { closeOrganization(); }
     else if (!els.projectEditorModal.classList.contains('hidden')) {
@@ -1015,13 +1038,15 @@ els.sidebarCloseBtn.addEventListener('click', closeMobileNavigation);
 els.navToggleBtn.addEventListener('click', () => { const open = els.appLayout.classList.toggle('sidebar-open'); els.navToggleBtn.setAttribute('aria-expanded', String(open)); });
 
 
-const repoEls = Object.fromEntries(['repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults', 'repositoryAttentionBtn', 'repositoryAllBtn', 'repositoryPullBtn', 'repositoryPushBtn', 'repositoryActionSummary', 'repositoryOperationSummary', 'syncAllRepositoriesBtn'].map((id) => [id, document.getElementById(id)]));
+const repoEls = Object.fromEntries(['repositoryProjectBtn', 'repositorySyncModal', 'repositorySyncNav', 'repositoryPendingCount', 'checkRepositoriesBtn', 'closeRepositorySyncBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'repositorySyncStatus', 'repositorySchedule', 'repositoryList', 'repositoryResults', 'repositoryAttentionBtn', 'repositoryAllBtn', 'repositoryPullBtn', 'repositoryPushBtn', 'repositoryActionSummary', 'repositoryOperationSummary', 'syncAllRepositoriesBtn'].map((id) => [id, document.getElementById(id)]));
 let repositoryPayload = null;
 let repositoryView = 'attention';
+let repositoryFocusKey = null;
 let repositoryPoll = null;
 let repositoryReadInFlight = false;
-function openRepositorySync(view = 'attention') {
+function openRepositorySync(view = 'attention', key = null) {
   repositoryView = view;
+  repositoryFocusKey = key;
   if (repositoryPayload) renderRepositorySync(repositoryPayload);
   rememberModalFocus(); repoEls.repositorySyncModal.classList.remove('hidden'); repoEls.repositorySyncModal.setAttribute('aria-hidden', 'false');
   repoEls.closeRepositorySyncBtn.focus(); readRepositorySync();
@@ -1056,7 +1081,7 @@ function renderRepositorySync(payload) {
   repoEls.repositorySyncStatus.textContent = payload.error || (payload.busy ? `正在${payload.operation === 'push' ? '推送' : payload.operation === 'pull' ? '拉取' : payload.operation === 'sync' ? '同步' : '检查'}${payload.currentRepository ? `：${payload.currentRepository}` : '仓库…'}` : `${repositories.length} 个仓库 · ${pending} 个需要处理 · 最近完成：${formatTimestamp(payload.lastFinishedAt)}`);
   if (payload.busy && payload.progress && !payload.error) repoEls.repositorySyncStatus.textContent += ` · 已完成 ${payload.progress.completed}/${payload.progress.total}`;
   const recent = payload.lastSync;
-  const recentResults = recent?.results || [];
+  const recentResults = (recent?.results || []).filter((result) => repositoryView !== 'project' || result.key === repositoryFocusKey);
   repoEls.repositoryOperationSummary.hidden = !recentResults.length;
   const count = (outcome) => recentResults.filter((result) => result.outcome === outcome).length;
   repoEls.repositoryOperationSummary.className = count('failed') || count('skipped') ? 'form-error' : 'field-help';
@@ -1070,6 +1095,10 @@ function renderRepositorySync(payload) {
   repoEls.repositoryAllBtn.textContent = `全部仓库 ${repositories.length}`;
   repoEls.repositoryAttentionBtn.setAttribute('aria-pressed', String(repositoryView === 'attention'));
   repoEls.repositoryAllBtn.setAttribute('aria-pressed', String(repositoryView === 'all'));
+  const focused = repositories.find((repo) => repo.key === repositoryFocusKey);
+  repoEls.repositoryProjectBtn.hidden = !focused;
+  repoEls.repositoryProjectBtn.textContent = focused ? `当前项目 · ${focused.name}` : '当前项目';
+  repoEls.repositoryProjectBtn.setAttribute('aria-pressed', String(repositoryView === 'project'));
   repoEls.repositoryList.replaceChildren();
   const byService = new Map(repositories.flatMap((repo) => repo.services.map((service) => [service.key, repo.key])));
   const parentKeys = new Map(repositories.map((repo) => [repo.key, repo.services.flatMap((service) => service.ancestors || []).map((ancestor) => byService.get(ancestor.key)).reverse().find((key) => key && key !== repo.key)]));
@@ -1105,14 +1134,14 @@ function renderRepositorySync(payload) {
     row.append(info, buttons); repoEls.repositoryList.appendChild(row);
     if (repositoryView === 'all') for (const child of repositories.filter((candidate) => parentKeys.get(candidate.key) === repo.key)) renderRepo(child, depth + 1);
   };
-  const displayed = repositoryView === 'attention' ? repositories.filter(repositoryNeedsAttention) : repositoryView === 'pull' ? pulls : repositoryView === 'push' ? pushes : repositories.filter((repo) => !parentKeys.get(repo.key));
+  const displayed = repositoryView === 'project' ? repositories.filter((repo) => repo.key === repositoryFocusKey) : repositoryView === 'attention' ? repositories.filter(repositoryNeedsAttention) : repositoryView === 'pull' ? pulls : repositoryView === 'push' ? pushes : repositories.filter((repo) => !parentKeys.get(repo.key));
   displayed.forEach((repo) => renderRepo(repo));
   if (repositories.length && !displayed.length) { const empty = document.createElement('p'); empty.className = 'repository-empty'; empty.textContent = repositoryView === 'pull' ? '目前没有待拉取的仓库。' : repositoryView === 'push' ? '目前没有待推送的仓库。' : '目前没有需要处理的仓库。'; repoEls.repositoryList.appendChild(empty); }
   if (!repositories.length) { const empty = document.createElement('p'); empty.className = 'field-help'; empty.textContent = '当前项目中没有可识别的 Git 仓库。'; repoEls.repositoryList.appendChild(empty); }
   repoEls.repositoryResults.replaceChildren();
   const resultGroups = [];
   if (recentResults.length) resultGroups.push(['最近一次同步结果', recentResults]);
-  if (payload.operation === 'check' || !recentResults.length) resultGroups.push([payload.operation === 'check' ? '最近一次检查结果' : '最近一次操作结果', payload.results || []]);
+  if (payload.operation === 'check' || !recentResults.length) resultGroups.push([payload.operation === 'check' ? '最近一次检查结果' : '最近一次操作结果', (payload.results || []).filter((result) => repositoryView !== 'project' || result.key === repositoryFocusKey)]);
   for (const [title, results] of resultGroups) {
     if (!results.length) continue;
     const heading = document.createElement('h3'); heading.textContent = title; repoEls.repositoryResults.appendChild(heading);
@@ -1129,6 +1158,16 @@ async function readRepositorySync() {
   catch (error) { repoEls.repositorySyncStatus.textContent = error.message; }
   finally { repositoryReadInFlight = false; clearTimeout(repositoryPoll); repositoryPoll = setTimeout(readRepositorySync, repositoryPayload?.busy ? 2000 : 15000); }
 }
+async function checkProjectRepository(project) {
+  const payload = await api.getRepositorySync();
+  renderRepositorySync(payload);
+  const repo = payload.repositories.find((item) => item.services.some((service) => service.key === project.key));
+  if (!repo) throw new Error(`${project.name} 没有可识别的 Git 仓库`);
+  openRepositorySync('project', repo.key);
+  if (!payload.busy) await runRepositoryAction('check', [repo.key]);
+  repoEls.repositoryList.querySelector(`[data-repo-key="${repo.key}"]`)?.scrollIntoView({ block: 'center' });
+}
+
 async function runRepositoryAction(kind, keys) {
   if (repositoryPayload?.busy) return;
   for (const id of ['checkRepositoriesBtn', 'checkAllRepositoriesBtn', 'pullAllRepositoriesBtn', 'pushAllRepositoriesBtn', 'syncAllRepositoriesBtn']) repoEls[id].disabled = true;
@@ -1137,7 +1176,7 @@ async function runRepositoryAction(kind, keys) {
   clearTimeout(repositoryPoll); repositoryPoll = setTimeout(readRepositorySync, 1000);
 }
 repoEls.repositorySyncNav.addEventListener('click', () => openRepositorySync());
-for (const [button, view] of [[repoEls.repositoryAttentionBtn, 'attention'], [repoEls.repositoryAllBtn, 'all'], [repoEls.repositoryPullBtn, 'pull'], [repoEls.repositoryPushBtn, 'push']]) {
+for (const [button, view] of [[repoEls.repositoryProjectBtn, 'project'], [repoEls.repositoryAttentionBtn, 'attention'], [repoEls.repositoryAllBtn, 'all'], [repoEls.repositoryPullBtn, 'pull'], [repoEls.repositoryPushBtn, 'push']]) {
   button.addEventListener('click', () => { repositoryView = view; if (repositoryPayload) renderRepositorySync(repositoryPayload); });
 }
 repoEls.closeRepositorySyncBtn.addEventListener('click', closeRepositorySync);
@@ -1165,7 +1204,7 @@ function updateRepositoryIndicators() {
     badge.textContent = repositoryStatusText(repo);
     badge.setAttribute('aria-label', `查看 ${repo.name} 仓库同步状态`);
     badge.title = `最后检查：${formatTimestamp(repo.checkedAt)}`;
-    badge.addEventListener('click', () => { openRepositorySync('all'); repoEls.repositoryList.querySelector(`[data-repo-key="${repo.key}"]`)?.scrollIntoView({ block: 'center' }); });
+    badge.addEventListener('click', () => { openRepositorySync('project', repo.key); repoEls.repositoryList.querySelector(`[data-repo-key="${repo.key}"]`)?.scrollIntoView({ block: 'center' }); });
     card.querySelector('.project-labels').appendChild(badge);
   }
 }

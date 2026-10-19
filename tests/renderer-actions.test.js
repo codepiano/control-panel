@@ -66,3 +66,23 @@ test('new unchecked repositories appear in the attention list', () => {
   assert.equal(context.repositoryNeedsAttention({ status: 'unchecked' }), true);
   assert.equal(context.repositoryNeedsAttention({ status: 'synced' }), false);
 });
+
+test('project update check targets its repository and never falls back to checking all', async () => {
+  const calls = [];
+  const context = vm.createContext({
+    api: { getRepositorySync: async () => ({ repositories: [
+      { key: 'other-repo', services: [{ key: 'other' }] },
+      { key: 'target-repo', services: [{ key: 'target' }, { key: 'shared-service' }] },
+    ] }) },
+    renderRepositorySync() {}, openRepositorySync() {},
+    runRepositoryAction: async (kind, keys) => calls.push({ kind, keys: Array.from(keys) }),
+    repoEls: { repositoryList: { querySelector: () => ({ scrollIntoView() {} }) } },
+  });
+  vm.runInContext(source.slice(source.indexOf('async function checkProjectRepository('), source.indexOf('async function runRepositoryAction(')), context);
+  await context.checkProjectRepository({ key: 'target', name: 'Target' });
+  assert.deepEqual(calls, [{ kind: 'check', keys: ['target-repo'] }]);
+  await context.checkProjectRepository({ key: 'shared-service', name: 'Shared' });
+  assert.deepEqual(calls[1], { kind: 'check', keys: ['target-repo'] });
+  await assert.rejects(context.checkProjectRepository({ key: 'missing', name: 'Missing' }), /没有可识别的 Git 仓库/);
+  assert.equal(calls.length, 2);
+});
