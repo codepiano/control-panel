@@ -1157,6 +1157,9 @@ function updateRepositoryIndicators() {
     card.querySelector('.repository-indicator')?.remove();
     const repo = lookup.get(card.dataset.key);
     if (!repo) continue;
+    const project = latestPayload?.projects.find((item) => item.key === card.dataset.key);
+    // A project-owned process shares its ancestor's repository, not a second Git identity.
+    if (project?.ancestors?.some((ancestor) => lookup.get(ancestor.key)?.key === repo.key)) continue;
     const badge = document.createElement('button'); badge.className = `repository-indicator state-${repo.status}`;
     badge.classList.toggle('needs-attention', repositoryNeedsAttention(repo));
     badge.textContent = repositoryStatusText(repo);
