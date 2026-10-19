@@ -240,3 +240,44 @@ test('opening an entry propagates script errors and remains retryable', async ()
   assert.equal(await core.invoke('open-project-homepage', [key]), true);
   assert.equal(fs.existsSync(marker), true);
 });
+
+test('late startup failure is reported even when a process status remains running', async () => {
+  const dir = path.join(root, 'late-failure');
+  const alive = path.join(dir, 'alive');
+  const key = writeManifest(dir, { name: 'Late failure', workingDirectory: '.', startCommand: `sleep 1.7; touch '${alive}'; echo late-startup-failed; exit 9`, statusCommand: `test -f '${alive}'` });
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json')));
+  manifest.children.push({ path: 'late-failure' }); writeManifest(root, manifest);
+  await core.invoke('refresh-projects');
+  await assert.rejects(core.invoke('start-project', [key]), /late-startup-failed/);
+  const project = (await core.invoke('get-dashboard-data')).projects.find(p => p.key === key);
+  assert.equal(project.status, 'running');
+  assert.match(project.details, /最近操作失败.*late-startup-failed/);
+});
+
+test('successful wrapper exit requires status confirmation and timeout does not claim success', async () => {
+  for (const [name, command, timeout, message] of [
+    ['unconfirmed', 'exit 0', 1000, /状态核验未通过/],
+    ['timed-out', 'sleep 0.5; exit 0', 100, /启动命令超时/],
+  ]) {
+    const key = writeManifest(path.join(root, name), { name, workingDirectory: '.', startCommand: command, startTimeoutMs: timeout, statusCommand: 'exit 1' });
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json')));
+    manifest.children.push({ path: name }); writeManifest(root, manifest);
+    await core.invoke('refresh-projects');
+    await assert.rejects(core.invoke('start-project', [key]), message);
+    const project = (await core.invoke('get-dashboard-data')).projects.find(p => p.key === key);
+    assert.equal(project.status, 'error');
+    assert.match(project.details, message);
+  }
+});
+
+test('failed stop rejects direct action and prevents restart from starting another service', async () => {
+  const marker = path.join(temporary, 'must-not-start');
+  const name = 'stop-failed';
+  const key = writeManifest(path.join(root, name), { name, workingDirectory: '.', stopCommand: 'echo stop-refused; exit 8', startCommand: `touch '${marker}'`, statusCommand: 'exit 1' });
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json')));
+  manifest.children.push({ path: name }); writeManifest(root, manifest);
+  await core.invoke('refresh-projects');
+  await assert.rejects(core.invoke('stop-project', [key]), /stop-refused/);
+  await assert.rejects(core.invoke('restart-project', [key]), /stop-refused/);
+  assert.equal(fs.existsSync(marker), false);
+});
