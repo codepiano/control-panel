@@ -12,10 +12,10 @@ function element() {
 }
 function fixture() {
   const repoEls = new Proxy({}, { get(target, name) { return target[name] ||= element(); } });
-  const context = vm.createContext({ repoEls, document: { createElement: element }, repositoryView: 'all',
+  const context = vm.createContext({ repoEls, document: { createElement: element }, repositoryView: 'all', repositoryFocusKey: null,
     updateRepositoryIndicators() {}, formatTimestamp: (value) => value || '-', runRepositoryAction() {} });
   vm.runInContext(render + '\n' + source.slice(source.indexOf('function repositoryNeedsAttention(')), context);
-  return { repoEls, render: (payload) => context.renderRepositorySync(payload) };
+  return { repoEls, context, render: (payload) => context.renderRepositorySync(payload) };
 }
 function texts(node) { return [node.textContent, ...node.children.flatMap(texts)].filter(Boolean).join('\n'); }
 
@@ -61,4 +61,24 @@ test('pinned submodules explain parent ownership and do not request intervention
   f.render({ repositories: [{ ...repo, dirty: 1 }], results: [] });
   assert.equal(f.repoEls.repositoryAttentionBtn.textContent, '需要处理 1');
   assert.match(texts(f.repoEls.repositoryList), /未提交 1 项/);
+});
+
+
+test('project view keeps only the selected repository visible across polling', () => {
+  const f = fixture();
+  f.context.repositoryView = 'project';
+  f.context.repositoryFocusKey = 'target';
+  const payload = { repositories: [
+    { key: 'other', name: 'Other', services: [], status: 'synced' },
+    { key: 'target', name: 'Target', services: [], status: 'synced' },
+  ], results: [{ key: 'other', name: 'Other result', outcome: 'checked', detail: 'Other details' }], lastSync: { results: [{ key: 'other', name: 'Other sync', outcome: 'success' }] } };
+  f.render(payload);
+  assert.doesNotMatch(texts(f.repoEls.repositoryResults), /Other/);
+  assert.equal(f.repoEls.repositoryOperationSummary.hidden, true);
+  assert.equal(f.repoEls.repositoryList.children.length, 1);
+  assert.match(texts(f.repoEls.repositoryList), /Target/);
+  assert.doesNotMatch(texts(f.repoEls.repositoryList), /Other/);
+  assert.equal(f.repoEls.repositoryProjectBtn.textContent, '当前项目 · Target');
+  f.render(payload);
+  assert.equal(f.repoEls.repositoryList.children.length, 1);
 });
