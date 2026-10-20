@@ -886,10 +886,10 @@ function discoverProjects(config) {
   return discovered;
 }
 
-async function getProjectStatus(project) {
+async function getProjectStatus(project, { ignoreTransition = false } = {}) {
   const state = projectState[project.key] || {};
   if (isPanelProject(project)) return { status: 'running', pid: process.pid, details: '本机 Web 后端运行中' };
-  if (startingProjects.has(project.key) || stoppingProjects.has(project.key)) return { status: state.status, pid: state.pid || null, details: state.lastOutput || '' };
+  if (!ignoreTransition && (startingProjects.has(project.key) || stoppingProjects.has(project.key))) return { status: state.status, pid: state.pid || null, details: state.lastOutput || '' };
 
   if (project.statusCommand) {
     const result = await execCommand(project.statusCommand, project.workingDirectory);
@@ -1051,7 +1051,8 @@ async function performProjectStart(projectKey) {
   const project = findProjectByKey(projectKey);
   if (!project) throw new Error('项目不存在，请刷新后重试');
   if (isPanelProject(project)) throw new Error('后端自身请通过 scripts/start.sh 管理');
-  if ((await getProjectStatus(project)).status === 'running') return { outcome: 'skipped', detail: '已经运行' };
+  // This start already owns the transition lock; check the live service instead of its cached state.
+  if ((await getProjectStatus(project, { ignoreTransition: true })).status === 'running') return { outcome: 'skipped', detail: '已经运行' };
   await assertPortsAvailable(project, discoverProjects(loadConfig()));
   const competing = projectsCache.find((other) => other.key !== project.key && startingProjects.has(other.key) && projectPorts(other).some((port) => projectPorts(project).includes(port)));
   if (competing) throw new Error(`端口正在由 ${competing.name} 启动，请稍后重试`);

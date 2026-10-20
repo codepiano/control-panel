@@ -74,6 +74,28 @@ test('batch launch skips running services, deduplicates keys and continues after
   assert.equal(again[0].outcome, 'skipped');
 });
 
+test('direct and batch starts recheck live status after an app exits outside the panel', async () => {
+  const before = (await core.invoke('get-dashboard-data')).projects.find((project) => project.key === worker).usageCount;
+  // The previous successful launch is persisted as running. Simulate a Dock quit.
+  fs.unlinkSync(marker);
+  await core.invoke('start-project', [worker]);
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'started');
+  let project = (await core.invoke('get-dashboard-data')).projects.find((item) => item.key === worker);
+  assert.equal(project.status, 'running');
+  assert.equal(project.usageCount, before + 1);
+
+  fs.unlinkSync(marker);
+  const results = await core.invoke('start-projects', [[worker]]);
+  assert.equal(results[0].outcome, 'started');
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'started');
+  project = (await core.invoke('get-dashboard-data')).projects.find((item) => item.key === worker);
+  assert.equal(project.usageCount, before + 2);
+
+  await core.invoke('start-project', [worker]);
+  project = (await core.invoke('get-dashboard-data')).projects.find((item) => item.key === worker);
+  assert.equal(project.usageCount, before + 2, 'a live service must still be skipped');
+});
+
 test('nested collections are not counted as runtimes and collection lifecycle declarations are rejected', async () => {
   const nested = path.join(root, 'nested');
   writeManifest(nested, { name: 'Nested', kind: 'collection', children: [{ path: 'service', role: 'frontend' }] });
