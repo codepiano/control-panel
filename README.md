@@ -152,3 +152,37 @@ $project-tooling 为当前服务注册端口，获取 spec，并生成或修复�
 注册请求在一个后端内串行执行，检查其它已发现 manifest 和实际监听进程，写入项目 `ports`，必要时增加本机发现入口。重复申请相同数量会复用已有端口，指定端口冲突则失败；注册保留其它 manifest 字段。返回的 `status: reserved` 只确认配置分配，实际服务监听配置、URL 和健康状态仍须由 skill 验证。注册不执行启动命令，也不会停止占用端口的其它进程；发现后会按现有机制执行项目状态脚本。
 
 同步面板顶部显示最近一次同步的成功、失败与跳过数量；每个仓库保留上次同步的时间和原因。分叉、未提交修改等导致的跳过会明确展示，后续检查和后端重启不会清除最近一次同步记录。此记录是历史结果，当前仓库状态以最近检查为准。Git 命令失败显示命令名称、退出码及输出，较长输出保留开头和末尾，并隐藏 URL 中的账号密码；面板继续只做快进拉取，不自动选择合并或变基策略。
+
+## 构建版本与运行版本
+
+项目可选择接入 Project Tooling 1.11 的版本化生命周期：
+
+```json
+{
+  "release": { "protocol": 1, "prepareTimeoutMs": 1800000, "activateTimeoutMs": 60000 },
+  "scripts": {
+    "version": "./scripts/version.sh",
+    "prepare": "./scripts/prepare.sh",
+    "activate": "./scripts/activate.sh"
+  }
+}
+```
+
+必须同时提供原有 `statusCommand` 和只管理自身的 `stopCommand`。`version` 只读输出
+`{"sourceRevision":"sha256:…","builtRevision":null,"runningRevision":null}`；未知版本必须为
+`null`。`prepare` 从环境变量 `PROJECT_TARGET_REVISION` 取得目标版本，在独立目录准备不可变产物，
+成功输出 `{"builtRevision":"sha256:…","artifactId":"opaque-id"}`。
+`activate` 从 `PROJECT_TARGET_REVISION`、`PROJECT_ARTIFACT_ID` 取得确定的产物，切换并后台启动，
+成功输出 `{"runningRevision":"sha256:…"}`。这三个命令的 stdout 只能是一个 JSON 对象，日志写 stderr。
+
+重启先准备产物，成功且源码版本未变化才停止旧服务；停止失败不切换，启动后检查健康及进程实际运行版本。
+构建失败保留旧服务，激活失败明确报错，不自动回退。运行版本必须由真实运行进程或经验证的进程身份对应记录提供，
+不能每次查询时读取工作区 HEAD。Git 提交号可作附加信息；源码指纹应包含未提交修改、依赖锁文件、构建配置，
+排除数据、密钥、依赖安装目录和产物。只有成功的完整产物才能记为构建版本；同版本产物由项目检查完整性后复用。
+
+未接入的项目继续使用原有启动/停止流程。版本未知不会被当成最新。源码方式的项目也应准备独立代码快照，
+可以省略编译。项目自行决定依赖、数据路径和外部 supervisor 的切换方式；不能把在线数据复制成测试数据后当作正式数据。
+父服务的切换不影响独立 tunnel/子服务。代码同步只更新源码并触发后续状态检查，不自动重启运行服务。
+
+面板自身保留原有 PID 与启动器身份检查，在独立重启助手中执行版本化准备与切换。启用 release 前应按完整协议完成项目适配，
+不能给未适配项目仅填入通用 `npm run build`。全部 29 个登记服务已提供项目自有脚本，在线切换仍需单独执行。接入清单见 `docs/release-adoption.md`。

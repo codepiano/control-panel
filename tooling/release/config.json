@@ -1,0 +1,33 @@
+{
+  "legacy": {
+    "start": [
+      "./scripts/start.sh"
+    ],
+    "stop": [
+      "./scripts/stop.sh"
+    ],
+    "status": [
+      "./scripts/status.sh"
+    ]
+  },
+  "prepare": [],
+  "outputs": [
+    "src/server.js"
+  ],
+  "persistent": [],
+  "runtimeFiles": [
+    ".env",
+    ".env.local",
+    ".env.production"
+  ],
+  "exclude": [],
+  "toolchain": [
+    [
+      "node",
+      "--version"
+    ]
+  ],
+  "startupTimeoutSec": 180,
+  "patches": [],
+  "panel": true
+}

@@ -130,7 +130,7 @@ h1 { margin: 0; font-size: 30px; font-weight: 650; line-height: 1.25; letter-spa
 .project-menu summary { display: grid; place-items: center; min-width: 25px; min-height: 30px; border-radius: 5px; color: var(--quiet); list-style: none; cursor: pointer; font-size: 11px; }
 .project-menu summary::-webkit-details-marker { display: none; }
 .project-menu summary:hover { background: var(--surface-raised); }
-.project-menu-list { display: grid; position: absolute; z-index: 20; top: 35px; right: 0; min-width: 183px; padding: 5px; background: #fff; border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
+.project-menu-list { display: grid; overflow-y: auto; overscroll-behavior: contain; position: absolute; z-index: 20; top: 35px; right: 0; min-width: 183px; padding: 5px; background: #fff; border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
 .project-menu-list button { font-size: 11px; }
 .project-details { grid-area: details; margin-top: 17px; padding: 18px 0 0 60px; border-top: 1px dashed var(--line); }
 .card-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 17px 24px; }

@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const os = require('os');
 const { createSnapshotCache } = require('./snapshot-cache');
 const { createGitSync } = require('./git-sync');
+const { releaseConfiguration, releaseStatus, applyRelease } = require('./releases');
 const { projectPorts, readListeners, buildPortReport, assertPortsAvailable } = require('./ports');
 let gitSync = null;
 const STATUS_REFRESH_MS = 30000;
@@ -116,7 +117,7 @@ function normalizeConfig(config) {
 }
 
 function isPanelProject(project) {
-  return path.resolve(project.projectDir || project.workingDirectory) === path.resolve(APP_ROOT);
+  return path.resolve(project.projectDir || project.workingDirectory) === path.resolve(process.env.PROJECT_RELEASE_ORIGIN || APP_ROOT);
 }
 
 function startsWithPanel(config, projectKey) {
@@ -706,6 +707,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     startTimeoutMs: Number.isInteger(manifest.startTimeoutMs) && manifest.startTimeoutMs >= 100 && manifest.startTimeoutMs <= 300000 ? manifest.startTimeoutMs : 60000,
     workingDirectory,
     startCommand,
+    release: releaseConfiguration(manifest),
     stopCommand,
     statusCommand,
     openEntryCommand,
@@ -813,7 +815,7 @@ function discoverProjects(config) {
     const manifest = parseManifest(manifestPath);
     if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) { issues.push({ path: manifestPath, detail: '配置不是有效 JSON 对象' }); return; }
     if (manifest.kind && !['project', 'collection'].includes(manifest.kind)) { issues.push({ path: manifestPath, detail: '不支持的 kind' }); return; }
-    if (manifest.kind === 'collection' && ['start', 'stop', 'status', 'restart', 'init', 'install', 'uninstall', 'openEntry', 'openHomepage'].some((name) => manifest[name] || manifest[`${name}Command`] || manifest.scripts?.[name])) {
+    if (manifest.kind === 'collection' && (manifest.release || ['start', 'stop', 'status', 'restart', 'init', 'install', 'uninstall', 'openEntry', 'openHomepage', 'version', 'prepare', 'activate'].some((name) => manifest[name] || manifest[`${name}Command`] || manifest.scripts?.[name]))) {
       issues.push({ path: manifestPath, detail: '集合不能声明生命周期命令，请将可控服务设为 project' }); return;
     }
     seenKeys.add(key);
@@ -826,8 +828,11 @@ function discoverProjects(config) {
     if (manifest.kind === 'collection') {
       collections.push({ key, name, manifestPath, notes: String(manifest.notes || ''), ancestors });
     } else {
-      const project = buildProjectFromManifest(manifestPath, manifest, root, 'auto');
-      discovered.push({ ...project, ancestors, relationship });
+      try {
+        const project = buildProjectFromManifest(manifestPath, manifest, root, 'auto');
+        if (project.release && !project.statusCommand) throw new Error('release 需要 statusCommand');
+        discovered.push({ ...project, ancestors, relationship });
+      } catch (error) { issues.push({ path: manifestPath, detail: error.message }); }
     }
     if (manifest.children !== undefined && !Array.isArray(manifest.children)) {
       issues.push({ path: manifestPath, detail: 'children 必须是数组' });
@@ -923,9 +928,11 @@ async function collectProjectsSnapshot() {
       const status = await getProjectStatus(project);
       const state = projectState[project.key] || {};
       const icon = resolveProjectIcon(project, config);
+      const version = await releaseStatus(project);
       return {
         ...project,
         ...icon,
+        version,
         group: config.projectPreferences[project.key]?.group || (project.ancestors || []).map((item) => item.name).join(' / '),
         localGroup: config.projectPreferences[project.key]?.group || '',
         tags: config.projectPreferences[project.key]?.tags || [],
@@ -1036,24 +1043,27 @@ function findProjectByKey(projectKey) {
   return projectsCache.find((item) => item.key === projectKey);
 }
 
-async function startProject(projectKey) {
-  if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey)) return { outcome: 'skipped', detail: '正在切换状态' };
+async function startProject(projectKey, { restart = false } = {}) {
+  if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey)) {
+    if (findProjectByKey(projectKey)?.release) throw new Error('服务正在切换状态，请稍后重试');
+    return { outcome: 'skipped', detail: '正在切换状态' };
+  }
   startingProjects.add(projectKey);
   try {
-    return await performProjectStart(projectKey);
+    return await performProjectStart(projectKey, { restart });
   } finally {
     startingProjects.delete(projectKey);
     await refreshAll();
   }
 }
 
-async function performProjectStart(projectKey) {
+async function performProjectStart(projectKey, { restart = false } = {}) {
   const project = findProjectByKey(projectKey);
   if (!project) throw new Error('项目不存在，请刷新后重试');
   if (isPanelProject(project)) throw new Error('后端自身请通过 scripts/start.sh 管理');
   // This start already owns the transition lock; check the live service instead of its cached state.
-  if ((await getProjectStatus(project, { ignoreTransition: true })).status === 'running') return { outcome: 'skipped', detail: '已经运行' };
-  await assertPortsAvailable(project, discoverProjects(loadConfig()));
+  if (!restart && (await getProjectStatus(project, { ignoreTransition: true })).status === 'running') return { outcome: 'skipped', detail: '已经运行' };
+  if (!restart) await assertPortsAvailable(project, discoverProjects(loadConfig()));
   const competing = projectsCache.find((other) => other.key !== project.key && startingProjects.has(other.key) && projectPorts(other).some((port) => projectPorts(project).includes(port)));
   if (competing) throw new Error(`端口正在由 ${competing.name} 启动，请稍后重试`);
 
@@ -1066,14 +1076,35 @@ async function performProjectStart(projectKey) {
   await refreshAll();
 
   try {
-    const pid = await launchDetached(project.startCommand, project.workingDirectory, project.key, project.startTimeoutMs);
-    if (project.statusCommand) {
-      const confirmation = await execCommand(project.statusCommand, project.workingDirectory);
-      if (confirmation.code !== 0) throw new Error(`启动脚本已结束，但状态核验未通过：${confirmation.stdout.trim() || confirmation.stderr.trim() || confirmation.code}`);
+    let pid = null;
+    if (project.release) {
+      if (!project.statusCommand) throw new Error('版本化启动需要 statusCommand 核验服务');
+      const applied = await applyRelease(project, {
+        stop: async () => {
+          await performProjectStop(projectKey);
+          await assertPortsAvailable(project, discoverProjects(loadConfig()));
+        },
+        confirm: async () => {
+          const result = await execCommand(project.statusCommand, project.workingDirectory);
+          if (result.code !== 0) throw new Error('新版启动后健康核验失败');
+        },
+        phase: (message) => {
+          projectState[project.key] = { ...(projectState[project.key] || {}), status: 'starting', lastOutput: message };
+          persistState();
+        },
+      });
+      projectState[project.key] = { ...(projectState[project.key] || {}), ...applied };
+    } else {
+      pid = await launchDetached(project.startCommand, project.workingDirectory, project.key, project.startTimeoutMs);
+      if (project.statusCommand) {
+        const confirmation = await execCommand(project.statusCommand, project.workingDirectory);
+        if (confirmation.code !== 0) throw new Error(`启动脚本已结束，但状态核验未通过：${confirmation.stdout.trim() || confirmation.stderr.trim() || confirmation.code}`);
+      }
     }
     const usageCount = getUsageCount(project.key) + 1;
     const lastStartedAt = new Date().toISOString();
     projectState[project.key] = {
+      ...(projectState[project.key] || {}),
       pid,
       status: 'running',
       lastOutput: `Started at ${new Date().toLocaleString()}`,
@@ -1171,6 +1202,7 @@ async function performProjectStop(projectKey) {
 }
 
 async function restartProject(projectKey) {
+  if (findProjectByKey(projectKey)?.release) return startProject(projectKey, { restart: true });
   await stopProject(projectKey);
   return startProject(projectKey);
 }

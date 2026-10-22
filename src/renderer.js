@@ -314,9 +314,21 @@ async function runProjectAction(button, project, action) {
       const current = latestPayload?.projects.find((item) => item.key === project.key) || project;
       const transitioning = current.status === 'starting' || current.status === 'stopping';
       button.disabled = transitioning;
-      button.textContent = action === 'restart' ? '重启' : transitioning ? statusLabel(current.status) : current.status === 'running' ? '停止' : '启动';
+      button.textContent = action === 'restart' ? (current.release ? '构建并运行新版' : '重启') : transitioning ? statusLabel(current.status) : current.status === 'running' ? '停止' : '启动';
     }
   }
+}
+
+function fitProjectMenu(menu) {
+  if (!menu.open) return;
+  const list = menu.querySelector('.project-menu-list');
+  const bounds = menu.getBoundingClientRect();
+  const below = window.innerHeight - bounds.bottom - 12;
+  const above = bounds.top - 12;
+  const useAbove = below < 260 && above > below;
+  list.style.top = useAbove ? 'auto' : '35px';
+  list.style.bottom = useAbove ? 'calc(100% + 8px)' : 'auto';
+  list.style.maxHeight = `${Math.max(80, useAbove ? above : below)}px`;
 }
 
 function closeProjectMenus(target = null) {
@@ -355,6 +367,7 @@ function renderProject(project) {
   const folderBtn = fragment.querySelector('.folder-btn');
   const projectConfigBtn = fragment.querySelector('.project-config-btn');
   const projectMenu = fragment.querySelector('.project-menu');
+  projectMenu.addEventListener('toggle', () => fitProjectMenu(projectMenu));
   projectMenu.addEventListener('click', (event) => {
     const button = event.target.closest('.project-menu-list button');
     if (!button || button.disabled) return;
@@ -378,7 +391,8 @@ function renderProject(project) {
     updateSelection();
   });
   const labels = fragment.querySelector('.project-labels');
-  for (const label of [project.favorite ? '★ 星标' : '', project.localGroup, project.relationship?.role, ...(project.tags || [])].filter(Boolean)) {
+  const versionLabels = { current: '已运行最新代码', 'needs-build': '代码更新 · 待构建', 'needs-restart': '新版已构建 · 待重启', unknown: '运行版本未知' };
+  for (const label of [versionLabels[project.version?.state], project.favorite ? '★ 星标' : '', project.localGroup, project.relationship?.role, ...(project.tags || [])].filter(Boolean)) {
     const badge = document.createElement('span');
     badge.textContent = label;
     labels.appendChild(badge);
@@ -391,7 +405,9 @@ function renderProject(project) {
     try { await api.saveProjectOrganization([project.key], { favorite: !project.favorite }); await refresh(); }
     catch (error) { showBatchMessage(`保存失败：${error.message}`); }
   });
-  const outputText = [...(project.portWarnings || []), project.details || project.lastOutput || ''].filter(Boolean).join(' · ');
+  const versionDetail = project.version && project.version.state !== 'unsupported'
+    ? `代码 ${project.version.sourceRevision || '未知'} · 产物 ${project.version.builtRevision || '未知'} · 运行 ${project.version.runningRevision || '未知'}${project.version.error ? ` · ${project.version.error}` : ''}` : '';
+  const outputText = [versionDetail, ...(project.portWarnings || []), project.details || project.lastOutput || ''].filter(Boolean).join(' · ');
   name.textContent = project.name;
   notes.textContent = project.notes || project.techStack || '未填写说明';
   output.textContent = statusSummary(project, outputText);
@@ -439,6 +455,7 @@ function renderProject(project) {
     projectMenu.open = false;
   });
 
+  if (project.release) { restartBtn.textContent = '构建并运行新版'; restartBtn.title = '先准备新版产物，成功后切换并核验运行版本'; }
   restartBtn.disabled = project.status === 'starting' || project.status === 'stopping';
   homepageBtn.disabled = !(project.frontendUrl || project.homepageUrl || project.openHomepageCommand || project.projectDir);
   repositoryBtn.disabled = !project.projectDir;
@@ -1054,6 +1071,10 @@ function openRepositorySync(view = 'attention', key = null) {
 function closeRepositorySync() {
   repoEls.repositorySyncModal.classList.add('hidden'); repoEls.repositorySyncModal.setAttribute('aria-hidden', 'true'); restoreModalFocus();
 }
+window.addEventListener('resize', () => {
+  for (const menu of document.querySelectorAll('.project-menu[open]')) fitProjectMenu(menu);
+});
+
 const repositoryLabels = { unchecked: '尚未检查', synced: '已同步', ahead: '待推送', behind: '待拉取', diverged: '已分叉', untracked: '无跟踪分支', detached: '未关联本地分支', pinned: '子模块版本正常', error: '检查失败' };
 function renderRepositorySync(payload) {
   repositoryPayload = payload;

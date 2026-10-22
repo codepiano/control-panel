@@ -86,3 +86,12 @@ test('project update check targets its repository and never falls back to checki
   await assert.rejects(context.checkProjectRepository({ key: 'missing', name: 'Missing' }), /没有可识别的 Git 仓库/);
   assert.equal(calls.length, 2);
 });
+
+test('version-aware restart keeps its action label after an unchanged snapshot or a failure', async () => {
+  const f = fixture('running', 'restart', async () => { throw new Error('build failed'); });
+  f.project.release = { protocol: 1 };
+  await f.run();
+  assert.equal(f.button.textContent, '构建并运行新版');
+  assert.equal(f.button.disabled, false);
+  assert.match(f.messages[0], /build failed/);
+});

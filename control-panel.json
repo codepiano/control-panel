@@ -3,10 +3,10 @@
   "name": "控制面板",
   "icon": "assets/app-icon.png",
   "workingDirectory": ".",
-  "startCommand": "./scripts/start.sh",
-  "stopCommand": "./scripts/stop.sh",
-  "statusCommand": "./scripts/status.sh",
-  "restartCommand": "./scripts/restart.sh",
+  "startCommand": "./scripts/release-start.sh",
+  "stopCommand": "./scripts/release-stop.sh",
+  "statusCommand": "./scripts/release-status.sh",
+  "restartCommand": "./scripts/release-restart.sh",
   "openEntryCommand": "./scripts/open-homepage.sh",
   "openHomepageCommand": "./scripts/open-homepage.sh",
   "surfaceType": "web",
@@ -15,5 +15,19 @@
   "homepageUrl": "https://github.com/codepiano/control-panel.git",
   "specUrl": "https://github.com/codepiano/control-panel-spec/blob/main/spec/PROJECT_TOOLING_SPEC.md",
   "notes": "本机 Web 服务中控",
-  "frontendUrl": "http://127.0.0.1:4310"
+  "frontendUrl": "http://127.0.0.1:4310",
+  "release": {
+    "protocol": 1,
+    "prepareTimeoutMs": 1800000,
+    "activateTimeoutMs": 240000
+  },
+  "scripts": {
+    "version": "./scripts/release-version.sh",
+    "prepare": "./scripts/release-prepare.sh",
+    "activate": "./scripts/release-activate.sh",
+    "start": "./scripts/release-start.sh",
+    "stop": "./scripts/release-stop.sh",
+    "status": "./scripts/release-status.sh",
+    "restart": "./scripts/release-restart.sh"
+  }
 }

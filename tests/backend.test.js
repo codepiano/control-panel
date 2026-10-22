@@ -303,3 +303,62 @@ test('failed stop rejects direct action and prevents restart from starting anoth
   await assert.rejects(core.invoke('restart-project', [key]), /stop-refused/);
   assert.equal(fs.existsSync(marker), false);
 });
+
+test('versioned restart prepares before stopping and confirms the actual runtime, with legacy behavior preserved', async () => {
+  const directory = path.join(root, 'versioned');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json'), 'utf8'));
+  const key = writeManifest(directory, {
+    name: 'Versioned', workingDirectory: '.', statusCommand: 'test -f running',
+    startCommand: 'exit 99', stopCommand: 'echo stop >> events; rm -f running',
+    release: {protocol:1}, scripts: {
+      version: `node release.cjs version`, prepare: `node release.cjs prepare`, activate: `node release.cjs activate`,
+    },
+  });
+  fs.writeFileSync(path.join(directory, 'running'), 'old');
+  fs.writeFileSync(path.join(directory, 'release.cjs'), `
+    const fs = require('fs');
+    const action = process.argv[2];
+    if (action === 'version') console.log(JSON.stringify({sourceRevision:'new',builtRevision:fs.existsSync('built')?'new':null,runningRevision:fs.existsSync('running')?fs.readFileSync('running','utf8'):null}));
+    if (action === 'prepare') {
+      fs.appendFileSync('events','prepare\\n');
+      if (fs.existsSync('fail')) process.exit(1);
+      if (fs.existsSync('delay')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,300);
+      fs.writeFileSync('built',process.env.PROJECT_TARGET_REVISION);
+      console.log(JSON.stringify({builtRevision:process.env.PROJECT_TARGET_REVISION,artifactId:'immutable-new'}));
+    }
+    if (action === 'activate') {
+      if (process.env.PROJECT_ARTIFACT_ID !== 'immutable-new') process.exit(3);
+      fs.appendFileSync('events','activate\\n');
+      fs.writeFileSync('running',process.env.PROJECT_TARGET_REVISION);
+      console.log(JSON.stringify({runningRevision:process.env.PROJECT_TARGET_REVISION}));
+    }
+  `);
+  manifest.children.push({path:'versioned'}); writeManifest(root, manifest);
+  await core.invoke('refresh-projects');
+  fs.writeFileSync(path.join(directory, 'fail'), '');
+  await assert.rejects(core.invoke('restart-project', [key]), /失败/);
+  assert.equal(fs.readFileSync(path.join(directory, 'running'),'utf8'), 'old');
+  assert.equal(fs.readFileSync(path.join(directory, 'events'),'utf8'), 'prepare\n');
+  fs.unlinkSync(path.join(directory, 'fail'));
+  fs.writeFileSync(path.join(directory, 'delay'), '');
+  const applying = core.invoke('restart-project', [key]);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  await assert.rejects(core.invoke('stop-project', [key]), /切换状态/);
+  await assert.rejects(core.invoke('restart-project', [key]), /切换状态/);
+  await applying;
+  assert.equal(fs.readFileSync(path.join(directory, 'events'),'utf8'), 'prepare\nprepare\nstop\nactivate\n');
+  const project = (await core.invoke('get-dashboard-data')).projects.find(p=>p.key===key);
+  assert.equal(project.version.state,'current');
+  assert.equal(project.version.runningRevision,'new');
+  assert.equal(project.status,'running');
+});
+
+test('invalid release configuration reports a scan issue without hiding other projects', async () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json'), 'utf8'));
+  writeManifest(path.join(root, 'bad-release'), {name:'Bad release',release:{protocol:1}});
+  manifest.children.push({path:'bad-release'}); writeManifest(root, manifest);
+  await core.invoke('refresh-projects');
+  const snapshot = await core.invoke('get-dashboard-data');
+  assert.ok(snapshot.scanReport.issues.some(issue => issue.path.includes('bad-release') && issue.detail.includes('release')));
+  assert.ok(snapshot.projects.some(p=>p.name==='Versioned'));
+});

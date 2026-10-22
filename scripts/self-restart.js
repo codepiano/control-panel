@@ -15,7 +15,10 @@ process.stdin.on('end', async () => {
     const currentLauncher = Number(fs.readFileSync(path.join(root, '.control-panel/control-panel.pid'), 'utf8').trim());
     if (health.pid !== serverPid || health.launcherPid !== launcherPid || currentLauncher !== launcherPid) throw new Error('后端进程已变化，取消此次重启');
     console.log(`[${new Date().toISOString()}] 页面请求重启控制面板 · 后端 PID ${serverPid}`);
-    const child = spawn('/bin/bash', [path.join(__dirname, 'restart.sh')], { cwd: root, stdio: 'inherit', env: process.env });
+    const origin = path.resolve(process.env.PROJECT_RELEASE_ORIGIN || root);
+    const versioned = path.join(origin, 'scripts/release-restart.sh');
+    const restartScript = fs.existsSync(versioned) ? versioned : path.join(__dirname, 'restart.sh');
+    const child = spawn('/bin/bash', [restartScript], { cwd: root, stdio: 'inherit', env: process.env });
     child.on('error', (error) => { console.error(error.message); process.exitCode = 1; });
     child.on('exit', (code) => { process.exitCode = code ?? 1; });
   } catch (error) { console.error(`控制面板自重启失败：${error.message}`); process.exitCode = 1; }
