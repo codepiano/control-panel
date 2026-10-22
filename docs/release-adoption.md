@@ -15,35 +15,35 @@
 
 | 服务 | 构建/准备入口 | 数据目录 | 验证 |
 | --- | --- | --- | --- |
-| OctoScope | corepack pnpm install --frozen-lockfile；corepack pnpm build；corepack pnpm --dir apps/web install --frozen-lockfile；corepack pnpm build:web；corepack pnpm --dir apps/chrome-extension install --frozen-lockfile；corepack pnpm build:chrome-extension | data | 独立产物准备通过；在线激活未执行 |
-| Agent Docs MCP | corepack pnpm install --frozen-lockfile；corepack pnpm --dir web install --frozen-lockfile；corepack pnpm build；corepack pnpm web:build | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| PDF Tool | npm ci；npm run build | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| Browser Reader | npm ci；npm run build | data | 独立产物准备通过；在线激活未执行 |
-| Mac 工具箱 | ./scripts/install.sh | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| Cutter | ./scripts/build-app.sh | 既有系统目录或无本地数据目录 | 编译完成，现有身份 codesign 超时；正式签名待验证 |
-| cookie-vault | npm ci | .runtime | 独立产物准备通过；在线激活未执行 |
-| common-mcp | npm ci | .runtime | 独立产物准备通过；在线激活未执行 |
-| 知键 · Rime Studio | npm ci | .data | 独立产物准备通过；在线激活未执行 |
-| Gnosmancer | corepack pnpm install --frozen-lockfile；corepack pnpm -r build | apps/api/uploads、apps/api/backups | 独立产物准备通过；在线激活未执行 |
-| media-library | npm ci | .runtime | 独立产物准备通过；在线激活未执行 |
-| market-data | npm ci | .runtime | 独立产物准备通过；在线激活未执行 |
-| Knots | bash -c mkdir -p .control-panel/bin && go build -o .control-panel/bin/knots-backend ./backend | data | 独立产物准备通过；在线激活未执行 |
-| Chrome 主页书签管理 | corepack pnpm install --frozen-lockfile；corepack pnpm build | data | 独立产物准备通过；在线激活未执行 |
-| 字符串处理工具 | npm ci；npm run build:client；npm run build | data | 独立产物准备通过；在线激活未执行 |
-| 控制面板 | 源码快照 | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| 诗歌研究 | python3 -m venv --copies backend/.venv；backend/.venv/bin/pip install ./backend；bash -c cd frontend && npm ci && npm run build | backend/data | 独立产物准备通过；在线激活未执行 |
-| 时间线工具库 | npm ci；npm run build | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| 时序 · Reminder | npm ci；npm run build | data | 独立产物准备通过；在线激活未执行 |
-| Agent Docs Tunnel | 既有 tunnel-client 二进制快照 | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| ASCII Diagram Renderer | npm ci；npm run build | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| common-mcp Tunnel | 既有 tunnel-client 二进制快照 | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| Gnosmancer Tunnel | 既有 tunnel-client 二进制快照 | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| Image Processor | npm ci；npm run build | db | 独立产物准备通过；在线激活未执行 |
-| Nautilus Pompilius | npm ci；npm run build | 既有系统目录或无本地数据目录 | 独立产物准备通过；在线激活未执行 |
-| OCR | corepack pnpm install --frozen-lockfile；corepack pnpm --dir web install；corepack pnpm --dir web build | data | 独立产物准备通过；在线激活未执行 |
-| Pearl | npm ci；npm run build | data | 独立产物准备通过；在线激活未执行 |
-| ThinkSchema | corepack pnpm install --frozen-lockfile；corepack pnpm build | data | 独立产物准备通过；在线激活未执行 |
-| web-fetch | npm ci | .runtime | 独立产物准备通过；在线激活未执行 |
+| OctoScope | corepack pnpm install --frozen-lockfile；corepack pnpm build；corepack pnpm --dir apps/web install --frozen-lockfile；corepack pnpm build:web；corepack pnpm --dir apps/chrome-extension install --frozen-lockfile；corepack pnpm build:chrome-extension | data | 隔离构建通过；保留原未运行状态 |
+| Agent Docs MCP | corepack pnpm install --frozen-lockfile；corepack pnpm --dir web install --frozen-lockfile；corepack pnpm build；corepack pnpm web:build | 既有系统目录或无本地数据目录 | 已上线；源码/构建/运行版本一致 |
+| PDF Tool | npm ci；npm run build | 既有系统目录或无本地数据目录 | 隔离构建通过；保留原未运行状态 |
+| Browser Reader | npm ci；npm run build | data | 已上线；源码/构建/运行版本一致 |
+| Mac 工具箱 | ./scripts/install.sh | 既有系统目录或无本地数据目录 | 已上线；源码/构建/运行版本一致 |
+| Cutter | ./scripts/build-app.sh | 既有系统目录或无本地数据目录 | 已上线；源码/构建/运行版本一致 |
+| cookie-vault | npm ci | .runtime | 已上线；源码/构建/运行版本一致 |
+| common-mcp | npm ci | .runtime | 已上线；源码/构建/运行版本一致 |
+| 知键 · Rime Studio | npm ci | .data | 隔离构建通过；保留原未运行状态 |
+| Gnosmancer | corepack pnpm install --frozen-lockfile；corepack pnpm -r build | apps/api/uploads、apps/api/backups | 已上线；源码/构建/运行版本一致 |
+| media-library | npm ci | .runtime | 已上线；源码/构建/运行版本一致 |
+| market-data | npm ci | .runtime | 已上线；源码/构建/运行版本一致 |
+| Knots | bash -c mkdir -p .control-panel/bin && go build -o .control-panel/bin/knots-backend ./backend | data | 隔离构建通过；保留原未运行状态 |
+| Chrome 主页书签管理 | corepack pnpm install --frozen-lockfile；corepack pnpm build | data | 隔离构建通过；保留原未运行状态 |
+| 字符串处理工具 | npm ci；npm run build:client；npm run build | data | 隔离构建通过；保留原未运行状态 |
+| 控制面板 | 源码快照 | 既有系统目录或无本地数据目录 | 已上线；源码/构建/运行版本一致 |
+| 诗歌研究 | python3 -m venv --copies backend/.venv；backend/.venv/bin/pip install ./backend；bash -c cd frontend && npm ci && npm run build | backend/data | 隔离构建通过；保留原未运行状态 |
+| 时间线工具库 | npm ci；npm run build | 既有系统目录或无本地数据目录 | 隔离构建通过；保留原未运行状态 |
+| 时序 · Reminder | npm ci；npm run build | data | 隔离构建通过；保留原未运行状态 |
+| Agent Docs Tunnel | 既有 tunnel-client 二进制快照 | 既有系统目录或无本地数据目录 | 已上线；源码/构建/运行版本一致 |
+| ASCII Diagram Renderer | npm ci；npm run build | 既有系统目录或无本地数据目录 | 隔离构建通过；保留原未运行状态 |
+| common-mcp Tunnel | 既有 tunnel-client 二进制快照 | 既有系统目录或无本地数据目录 | 已上线；源码/构建/运行版本一致 |
+| Gnosmancer Tunnel | 既有 tunnel-client 二进制快照 | 既有系统目录或无本地数据目录 | 已上线；源码/构建/运行版本一致 |
+| Image Processor | npm ci；npm run build | db | 隔离构建通过；保留原未运行状态 |
+| Nautilus Pompilius | npm ci；npm run build | 既有系统目录或无本地数据目录 | 隔离构建通过；保留原未运行状态 |
+| OCR | corepack pnpm install --frozen-lockfile；corepack pnpm --dir web install；corepack pnpm --dir web build | data | 隔离构建通过；保留原未运行状态 |
+| Pearl | npm ci；npm run build | data | 隔离构建通过；保留原未运行状态 |
+| ThinkSchema | corepack pnpm install --frozen-lockfile；corepack pnpm build | data | 隔离构建通过；保留原未运行状态 |
+| web-fetch | npm ci | .runtime | 已上线；源码/构建/运行版本一致 |
 
 ## 验证边界
 
@@ -54,12 +54,13 @@
 - common-mcp 与四个子服务的原有 npm test 在额外的完整独立副本和临时 HOME 中执行。
 - 面板自身在临时数据、独立回环端口完成真实自重启，回读新 PID 及运行版本。
 - 桌面浏览器检查 1440 和 1000 像素宽度、长标签、焦点与禁用状态；未测试移动端。
-- tunnel 准备只复制既有客户端；未重启在线 LaunchAgent，未声称远端 MCP 端到端可用性已验证。
-- 其他项目未执行在线激活、真实业务数据迁移或桌面应用替换。Cutter 当前保留旧应用，签名完成前不会切换。
+- tunnel 已使用独立客户端产物切换，三个 LaunchAgent 本地就绪通过。远端调用单独复核，不以本地就绪代替端到端结论。
+- 用户授权合并上线后，运行中的 14 个服务完成切换并回读版本一致；另外 15 个保持原未运行状态。Cutter 新进程路径、二进制 SHA-256 与 codesign --verify --deep --strict 均已核对。
+- Agent Docs 同期身份迁移由其原聊天完成；本次接入保留 cluster-active.json 和私有配置指针。
 
 ## 上线顺序
 
-先合并并交付控制面板的新后端，再启用其他项目的 release 配置。旧消费者的通用重启会先停止再启动，不能提前启用这些 manifest；CLI 可直接使用新 release-restart.sh 完整流程。
+本次已先将控制面板合入 main 并上线新后端，再交付其他项目的 release 配置。旧消费者的通用重启会先停止再启动，不能提前启用这些 manifest；CLI 可直接使用新 release-restart.sh 完整流程。
 
 ## 接入后的操作
 
@@ -99,3 +100,13 @@
 | web-fetch | [6742fcc1c5](https://github.com/codepiano/web-fetch/commit/6742fcc1c51957235e7d39555b4c16682e78e447) |
 | Project Tooling Spec | [b96c0376cd](https://github.com/codepiano/control-panel-spec/commit/b96c0376cdecbd9fa622f795f6a69d3fc60e1e93) |
 | common-mcp | [063013b2aa](https://github.com/codepiano/common-mcp/commit/063013b2aa304b5a99517ecb2f2cfe7b720465cb) |
+
+## 2026-10-22 合并与上线记录
+
+- 27 个仓库的本次改动已进入远端 main，本机项目目录已更新；原有未提交文档保留。
+- 时间线工具库以 c33dc75 将本次接入单独合入 main，保留原开发分支的其他功能提交。
+- 上线复核修正：Agent Docs 的含空格入口路径与原目录私有配置读取（1c8e5f9）；三个 tunnel 的启动等待预算（Agent Docs d22f5ca、common-mcp ec5d214、Gnosmancer 4eb3bb4）；Gnosmancer 运行日志移出不可变产物（4429aa6）。
+- 含空格隔离目录的 Agent Docs 配对生命周期测试 2 项通过，配置来源回归测试 2 项通过；launchd 测试 13 项通过。
+- CLI 批次结束后复核过实际进程；Browser Reader 与 Gnosmancer 使用独立会话重新启动，避免部署命令会话退出影响 nohup 子进程。
+- media-library 首次 npm 下载超时保留旧服务，重试成功后才切换。
+- 端到端复核：Gnosmancer 远端 knowledge_usage_guide 成功；common-mcp 与 Agent Docs 新客户端的文稿文件夹访问被 macOS TCC 授权请求阻塞，须由用户处理系统授权后重新验证。进程运行、版本一致和本地就绪不代表这两个远端调用已经可用。
