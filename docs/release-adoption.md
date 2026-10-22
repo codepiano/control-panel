@@ -109,4 +109,4 @@
 - 含空格隔离目录的 Agent Docs 配对生命周期测试 2 项通过，配置来源回归测试 2 项通过；launchd 测试 13 项通过。
 - CLI 批次结束后复核过实际进程；Browser Reader 与 Gnosmancer 使用独立会话重新启动，避免部署命令会话退出影响 nohup 子进程。
 - media-library 首次 npm 下载超时保留旧服务，重试成功后才切换。
-- 端到端复核：Gnosmancer 远端 knowledge_usage_guide 成功；common-mcp 与 Agent Docs 新客户端的文稿文件夹访问被 macOS TCC 授权请求阻塞，须由用户处理系统授权后重新验证。进程运行、版本一致和本地就绪不代表这两个远端调用已经可用。
+- 端到端复核：Gnosmancer 远端 knowledge_usage_guide 成功。用户完成 macOS 文稿文件夹访问授权后，common-mcp 远端 list_services 成功返回 4 个服务，Agent Docs 远端 docs_usage_get 成功，集群 revision 27、authorization_current=true，身份为迁移后的全局 agent。三个 tunnel 的远端实际调用均已通过。
