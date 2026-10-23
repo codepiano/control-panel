@@ -53,7 +53,7 @@ let latestPayload = null;
 let projectSearchQuery = '';
 let statusFilter = 'all';
 let projectSort = 'status';
-let refreshInFlight = false;
+let refreshInFlight = null;
 let editingProject = null;
 let modalReturnFocus = null;
 
@@ -767,21 +767,25 @@ async function restartPanel() {
 
 async function refresh() {
   if (panelRestartInFlight) return;
-  if (refreshInFlight) return;
-  refreshInFlight = true;
-  try {
-    const data = await api.getDashboardData();
-    if (!latestPayload || (latestPayload.snapshotId || latestPayload.updatedAt) !== (data.snapshotId || data.updatedAt) || els.backendStatus.textContent !== '本机后端已连接') renderDashboard(data);
-    else updateRuntimeDisplays();
-    setRefreshIndicator(true);
-  } catch (error) {
-    const message = String(error?.message || error || '未知错误');
-    els.runningSummary.textContent = `刷新失败：${message}`;
-    els.backendStatus.textContent = '后端连接失败';
-    setRefreshIndicator(false, message);
-  } finally {
-    refreshInFlight = false;
-  }
+  // Join the current read, then read again so action completion cannot use an
+  // older in-flight response to leave its card in a transition state.
+  while (refreshInFlight) await refreshInFlight;
+  const pending = (async () => {
+    try {
+      const data = await api.getDashboardData();
+      if (!latestPayload || (latestPayload.snapshotId || latestPayload.updatedAt) !== (data.snapshotId || data.updatedAt) || els.backendStatus.textContent !== '本机后端已连接') renderDashboard(data);
+      else updateRuntimeDisplays();
+      setRefreshIndicator(true);
+    } catch (error) {
+      const message = String(error?.message || error || '未知错误');
+      els.runningSummary.textContent = `刷新失败：${message}`;
+      els.backendStatus.textContent = '后端连接失败';
+      setRefreshIndicator(false, message);
+    }
+  })();
+  refreshInFlight = pending;
+  try { await pending; }
+  finally { if (refreshInFlight === pending) refreshInFlight = null; }
 }
 
 els.refreshBtn.addEventListener('click', async () => {

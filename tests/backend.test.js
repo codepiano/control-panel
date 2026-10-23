@@ -362,3 +362,36 @@ test('invalid release configuration reports a scan issue without hiding other pr
   assert.ok(snapshot.scanReport.issues.some(issue => issue.path.includes('bad-release') && issue.detail.includes('release')));
   assert.ok(snapshot.projects.some(p=>p.name==='Versioned'));
 });
+
+test('stop timeout clears the transition and a later restart remains usable', async () => {
+  const directory = path.join(root, 'stop-timeout');
+  const key = writeManifest(directory, { name: 'Stop timeout', workingDirectory: '.',
+    stopCommand: 'sleep 30 & wait', stopTimeoutMs: 100,
+    startCommand: 'touch alive', statusCommand: 'test -f alive' });
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json')));
+  manifest.children.push({ path: 'stop-timeout' }); writeManifest(root, manifest);
+  await core.invoke('refresh-projects');
+  await assert.rejects(core.invoke('restart-project', [key]), /命令超时/);
+  let project = (await core.invoke('get-dashboard-data')).projects.find(p => p.key === key);
+  assert.equal(project.status, 'error');
+  writeManifest(directory, { name: 'Stop timeout', workingDirectory: '.',
+    stopCommand: 'sleep .2; rm -f alive', stopTimeoutMs: 2000,
+    startCommand: 'touch alive', statusCommand: 'test -f alive' });
+  await core.invoke('refresh-projects');
+  await core.invoke('restart-project', [key]);
+  project = (await core.invoke('get-dashboard-data')).projects.find(p => p.key === key);
+  assert.equal(project.status, 'running');
+});
+
+test('default stop budget allows graceful shutdown beyond the status probe deadline', async () => {
+  const directory = path.join(root, 'graceful-stop');
+  const key = writeManifest(directory, { name: 'Graceful stop', workingDirectory: '.',
+    stopCommand: 'sleep 8.2; rm -f alive', startCommand: 'touch alive', statusCommand: 'test -f alive' });
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'control-panel.json')));
+  manifest.children.push({ path: 'graceful-stop' }); writeManifest(root, manifest);
+  fs.writeFileSync(path.join(directory, 'alive'), '');
+  await core.invoke('refresh-projects');
+  await core.invoke('restart-project', [key]);
+  const project = (await core.invoke('get-dashboard-data')).projects.find(p => p.key === key);
+  assert.equal(project.status, 'running');
+});

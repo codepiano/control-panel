@@ -95,3 +95,24 @@ test('version-aware restart keeps its action label after an unchanged snapshot o
   assert.equal(f.button.disabled, false);
   assert.match(f.messages[0], /build failed/);
 });
+
+test('action completion waits for an older dashboard request then reads the final state', async () => {
+  let release;
+  const oldRead = new Promise(resolve => { release = resolve; });
+  let reads = 0;
+  const context = vm.createContext({
+    panelRestartInFlight: false, refreshInFlight: oldRead,
+    api: { getDashboardData: async () => { reads++; return { snapshotId: 'final' }; } },
+    latestPayload: { snapshotId: 'starting' },
+    els: { backendStatus: { textContent: '本机后端已连接' } },
+    renderDashboard(data) { context.latestPayload = data; }, updateRuntimeDisplays() {}, setRefreshIndicator() {},
+  });
+  vm.runInContext(source.slice(source.indexOf('async function refresh() {'), source.indexOf("els.refreshBtn.addEventListener")), context);
+  const pending = context.refresh();
+  assert.equal(reads, 0);
+  context.refreshInFlight = null;
+  release();
+  await pending;
+  assert.equal(reads, 1);
+  assert.equal(context.latestPayload.snapshotId, 'final');
+});

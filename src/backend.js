@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { execCommand } = require('./commands');
 const { createSnapshotCache } = require('./snapshot-cache');
 const { createGitSync } = require('./git-sync');
 const { releaseConfiguration, releaseStatus, applyRelease } = require('./releases');
@@ -302,36 +303,8 @@ function getLastStartedAt(projectKey) {
 }
 
 function normalizeCommandResult(result) {
-  return {
-    code: typeof result.code === 'number' ? result.code : 1,
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
-  };
-}
-
-function execCommand(command, cwd) {
-  return new Promise((resolve) => {
-    if (!command) {
-      resolve(normalizeCommandResult({ code: 0, stdout: '', stderr: '' }));
-      return;
-    }
-
-    exec(
-      command,
-      { cwd, shell: '/bin/zsh', env: process.env, timeout: STATUS_COMMAND_TIMEOUT_MS },
-      (error, stdout, stderr) => {
-        resolve(
-          normalizeCommandResult({
-            code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
-            stdout,
-            stderr: error?.killed
-              ? `${stderr || ''}\n命令超时（${STATUS_COMMAND_TIMEOUT_MS / 1000} 秒）`.trim()
-              : stderr,
-          })
-        );
-      }
-    );
-  });
+  return { code: typeof result.code === 'number' ? result.code : 1,
+    stdout: result.stdout || '', stderr: result.stderr || '' };
 }
 
 function isPidAlive(pid) {
@@ -705,6 +678,7 @@ function buildProjectFromManifest(manifestPath, manifest, root, source = 'auto')
     icon: String(manifest.icon || ''),
     surfaceType: String(manifest.surfaceType || ''),
     startTimeoutMs: Number.isInteger(manifest.startTimeoutMs) && manifest.startTimeoutMs >= 100 && manifest.startTimeoutMs <= 300000 ? manifest.startTimeoutMs : 60000,
+    stopTimeoutMs: Number.isInteger(manifest.stopTimeoutMs) && manifest.stopTimeoutMs >= 100 && manifest.stopTimeoutMs <= 300000 ? manifest.stopTimeoutMs : 60000,
     workingDirectory,
     startCommand,
     release: releaseConfiguration(manifest),
@@ -1073,9 +1047,8 @@ async function performProjectStart(projectKey, { restart = false } = {}) {
     lastOutput: 'Starting',
   };
   persistState();
-  await refreshAll();
-
   try {
+    await refreshAll();
     let pid = null;
     if (project.release) {
       if (!project.statusCommand) throw new Error('版本化启动需要 statusCommand 核验服务');
@@ -1146,15 +1119,14 @@ async function performProjectStop(projectKey) {
     lastOutput: 'Stopping',
   };
   persistState();
-  await refreshAll();
-
   try {
+    await refreshAll();
     if (project.stopCommand) {
-      const result = await execCommand(project.stopCommand, project.workingDirectory);
+      const result = await execCommand(project.stopCommand, project.workingDirectory, { timeoutMs: project.stopTimeoutMs });
       projectState[project.key] = {
         ...(projectState[project.key] || {}),
         status: result.code === 0 ? 'stopped' : 'error',
-        lastOutput: result.stdout.trim() || result.stderr.trim() || `Stop exited with ${result.code}`,
+        lastOutput: [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n') || `Stop exited with ${result.code}`,
       };
     } else {
       const currentPid = projectState[project.key]?.pid;

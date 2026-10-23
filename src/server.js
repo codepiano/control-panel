@@ -19,7 +19,9 @@ async function createServer({ autoStart = true } = {}) {
     ['/assets/app-icon.png', ['assets/app-icon.png', 'image/png']],
   ]);
   const server = http.createServer(async (req, res) => {
-    const origin = `http://127.0.0.1:${server.address().port}`;
+    const address = server.address();
+    if (!address) { res.writeHead(503, { Connection: 'close' }); res.end(); return; }
+    const origin = `http://127.0.0.1:${address.port}`;
     const reply = (status, data) => {
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(data));
@@ -77,7 +79,10 @@ if (require.main === module) {
   createServer().then((server) => {
     server.on('error', (error) => { console.error(error.message); process.exitCode = 1; });
     server.listen(port, '127.0.0.1', () => console.log(`[${new Date().toISOString()}] 控制面板就绪：http://127.0.0.1:${port} · 后端 PID ${process.pid} · 配置 ${core.getConfigPath()}`));
-    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => process.exit(0)));
+    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+      server.close(() => process.exit(0));
+      server.closeAllConnections();
+    });
   }).catch((error) => { console.error(error); process.exitCode = 1; });
 }
 module.exports = { createServer };

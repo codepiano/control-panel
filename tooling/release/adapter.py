@@ -416,8 +416,11 @@ def stop():
     if result.returncode:
         raise RuntimeError('停止失败，拒绝切换')
     if record:
-        if any(signature(p['pid']) == p['identity'] for p in record['processes']):
-            raise RuntimeError('停止后仍有目标版本进程存活，拒绝切换')
+        deadline = time.monotonic() + 10
+        while any(signature(p['pid']) == p['identity'] for p in record['processes']):
+            if time.monotonic() >= deadline:
+                raise RuntimeError('停止后仍有目标版本进程存活，拒绝切换')
+            time.sleep(.2)
         ACTIVE.unlink(missing_ok=True)
     return dict(status='stopped')
 
