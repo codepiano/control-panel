@@ -9,7 +9,10 @@
     "dev": "npm run build && node --watch src/server.js",
     "test": "node --test tests/*.test.js",
     "build": "node scripts/build-ui.mjs",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "typecheck": "tsc -p tsconfig.json",
+    "check:bundle": "node scripts/check-bundle.mjs",
+    "check:dependencies": "node scripts/check-dependencies.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -18,12 +21,15 @@
     "@mantine/core": "9.7.3",
     "@mantine/hooks": "9.7.3",
     "@tabler/icons-react": "3.49.0",
+    "get-nonce": "1.0.1",
     "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "get-nonce": "1.0.1"
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
-    "esbuild": "0.28.2"
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
   }
 }

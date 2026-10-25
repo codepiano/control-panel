@@ -123,7 +123,23 @@ test('web API serves the browser and enforces session, host, origin and static a
   assert.ok(Number.isInteger(health.running));
   const page = await fetch(base);
   assert.equal(page.status, 200);
-  assert.ok((await page.text()).includes('client.js'));
+  const html = await page.text();
+  assert.ok(html.includes('client.js'));
+  assert.match(html, /type="module" src="\/ui\/app.js"/);
+  const nonce = html.match(/name="style-nonce" content="([^"]+)"/)[1];
+  assert.ok(page.headers.get('content-security-policy').includes(`'nonce-${nonce}'`));
+  const assets = JSON.parse(fs.readFileSync(path.join(__dirname, '../dist/manifest.json'), 'utf8'));
+  for (const file of assets.files) {
+    const asset = await fetch(`${base}/ui/${file}`);
+    assert.equal(asset.status, 200, file);
+    assert.equal(asset.headers.get('cache-control'), file.startsWith('chunks/') ? 'public, max-age=31536000, immutable' : 'no-cache');
+    if (file.endsWith('.map')) {
+      assert.match(asset.headers.get('content-type'), /application\/json/);
+      assert.equal((await asset.json()).version, 3);
+    }
+  }
+  assert.equal((await fetch(`${base}/ui/chunks/not-a-build-output.js`)).status, 404);
+  assert.equal((await fetch(`${base}/ui/manifest.json`)).status, 404);
   const { token } = await (await fetch(`${base}/api/session`)).json();
   const post = (headers = {}, action = 'get-dashboard-data', body = JSON.stringify({ args: [] })) => fetch(`${base}/api/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body });
   assert.equal((await post()).status, 403);

@@ -1,0 +1,40 @@
+{
+  "commit": "28a524f",
+  "scope": "HTML, all initial static JS/CSS dependencies and favicon; excludes API data, user icons, lazy views and sourcemaps",
+  "files": [
+    {
+      "url": "/",
+      "bytes": 523,
+      "gzip": 331
+    },
+    {
+      "url": "/ui/app.js",
+      "bytes": 602542,
+      "gzip": 185643
+    },
+    {
+      "url": "/ui/app.css",
+      "bytes": 254719,
+      "gzip": 36887
+    },
+    {
+      "url": "/client.js",
+      "bytes": 3397,
+      "gzip": 1373
+    },
+    {
+      "url": "/project-tree.js",
+      "bytes": 1827,
+      "gzip": 674
+    },
+    {
+      "url": "/assets/app-icon.png",
+      "bytes": 2395753,
+      "gzip": 2396474
+    }
+  ],
+  "total": {
+    "bytes": 3258761,
+    "gzip": 2621382
+  }
+}

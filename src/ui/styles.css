@@ -158,3 +158,10 @@ textarea {
     right: 24px;
   }
 }
+.surface-loading {
+  position: fixed;
+  right: 32px;
+  top: 88px;
+  z-index: 190;
+  background: white;
+}

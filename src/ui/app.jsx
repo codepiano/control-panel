@@ -1,5 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  lazy,
+  Suspense,
+} from "react";
+import { createRoot } from "./react-runtime.js";
 import {
   ActionIcon,
   Accordion,
@@ -10,31 +17,25 @@ import {
   Box,
   Button,
   Checkbox,
-  Code,
   Collapse,
   Divider,
   Group,
   Loader,
   MantineProvider,
   Menu,
-  Modal,
   NavLink,
-  NumberInput,
   Paper,
   ScrollArea,
   Select,
   SimpleGrid,
   Stack,
-  Switch,
   Table,
   Text,
-  Textarea,
   TextInput,
   ThemeIcon,
   Title,
   Tooltip,
-  createTheme,
-} from "@mantine/core";
+} from "./components.jsx";
 import {
   IconArrowUpRight,
   IconCheck,
@@ -53,7 +54,7 @@ import {
 } from "@tabler/icons-react";
 import { setNonce } from "get-nonce";
 import model from "./model.cjs";
-import "@mantine/core/styles.css";
+import "./mantine-styles.css";
 import "./styles.css";
 const {
   formatTimestamp: timestamp,
@@ -61,39 +62,19 @@ const {
   statusLabel,
   statusSummary,
   projectMatchesSearch,
-  splitFrontendUrl,
   repositoryNeedsAttention: needsAttention,
   repositoryStatusText: repoText,
-  repositoryActionGuidance: repoGuidance,
-  repositoryCanSync: canSync,
   repositoryForProject,
-  repositoryResults,
 } = model;
+import { theme } from "./theme.js";
+import { useViewRoute } from "./view-route.js";
+import { Empty } from "./shared.jsx";
+const Settings = lazy(() => import("./views/Settings.jsx"));
+const Editor = lazy(() => import("./views/Editor.jsx"));
+const Organization = lazy(() => import("./views/Organization.jsx"));
+const Repositories = lazy(() => import("./views/Repositories.jsx"));
 const api = window.controlPanel;
 const { buildProjectTree, matchingProjects } = window.projectTree;
-const theme = createTheme({
-  primaryColor: "teal",
-  defaultRadius: "md",
-  fontFamily:
-    'Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif',
-  headings: { fontFamily: "inherit" },
-  components: {
-    Button: Button.extend({ defaultProps: { size: "sm" } }),
-    Select: Select.extend({
-      defaultProps: {
-        allowDeselect: false,
-        checkIconPosition: "right",
-        comboboxProps: { withinPortal: true },
-      },
-    }),
-    Modal: Modal.extend({
-      defaultProps: {
-        centered: true,
-        overlayProps: { backgroundOpacity: 0.35, blur: 3 },
-      },
-    }),
-  },
-});
 const colorFor = (status) =>
   status === "running"
     ? "teal"
@@ -138,13 +119,6 @@ function Uptime({ at, status = "running", backend = false }) {
     </Text>
   );
 }
-function Empty({ children }) {
-  return (
-    <Text c="dimmed" ta="center" p="xl">
-      {children}
-    </Text>
-  );
-}
 function NavigationNode({ node, scope, selectScope, depth = 0 }) {
   return (
     <>
@@ -174,9 +148,53 @@ function NavigationNode({ node, scope, selectScope, depth = 0 }) {
   );
 }
 
+/** @extends {React.Component<{ active: boolean, children: React.ReactNode }>} */
+class SurfaceBoundary extends React.Component {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return this.props.active ? (
+      <Alert
+        className="surface-loading"
+        color="red"
+        role="alert"
+        title="面板加载失败"
+      >
+        <Text size="sm">请重新加载页面后再试。</Text>
+        <Button size="xs" mt="sm" onClick={() => window.location.reload()}>
+          重新加载页面
+        </Button>
+      </Alert>
+    ) : null;
+  }
+}
+function LoadingSurface() {
+  return (
+    <Paper
+      className="surface-loading"
+      withBorder
+      shadow="md"
+      p="md"
+      role="status"
+    >
+      <Group gap="sm">
+        <Loader size="sm" />
+        <Text size="sm">正在加载面板…</Text>
+      </Group>
+    </Paper>
+  );
+}
 function App() {
+  const { settings, setSettings, repoModal, setRepoModal } = useViewRoute();
   const [data, setData] = useState(null),
-    [repos, setRepos] = useState({ repositories: [] });
+    [repos, setRepos] = useState(
+      /** @type {{ repositories: any[], busy?: boolean }} */ ({
+        repositories: [],
+      }),
+    );
   const [connected, setConnected] = useState(false),
     [message, setMessage] = useState(""),
     [results, setResults] = useState([]);
@@ -188,10 +206,8 @@ function App() {
     [favorites, setFavorites] = useState(false);
   const [selected, setSelected] = useState(new Set()),
     [busy, setBusy] = useState(new Set());
-  const [settings, setSettings] = useState(false),
-    [editor, setEditor] = useState(null),
-    [organization, setOrganization] = useState(null),
-    [repoModal, setRepoModal] = useState(null);
+  const [editor, setEditor] = useState(null),
+    [organization, setOrganization] = useState(null);
   const refreshing = useRef(false),
     repoReading = useRef(false),
     locks = useRef(new Set()),
@@ -341,8 +357,8 @@ function App() {
       }
       if (sort === "recent") {
         const diff =
-          new Date(b.project?.lastStartedAt || 0) -
-          new Date(a.project?.lastStartedAt || 0);
+          new Date(b.project?.lastStartedAt || 0).getTime() -
+          new Date(a.project?.lastStartedAt || 0).getTime();
         if (diff) return diff;
       }
       return a.name.localeCompare(b.name, "zh-CN");
@@ -415,6 +431,30 @@ function App() {
       query || status !== "all" || scope !== "all" || tag || favorites,
     ),
   };
+  const [loaded, setLoaded] = useState({
+    settings: false,
+    editor: false,
+    organization: false,
+    repositories: false,
+  });
+  useEffect(() => {
+    const active = {
+      settings: Boolean(settings),
+      editor: Boolean(editor),
+      organization: Boolean(organization),
+      repositories: Boolean(repoModal),
+    };
+    setLoaded((old) =>
+      Object.keys(active).some((key) => active[key] && !old[key])
+        ? {
+            settings: old.settings || active.settings,
+            editor: old.editor || active.editor,
+            organization: old.organization || active.organization,
+            repositories: old.repositories || active.repositories,
+          }
+        : old,
+    );
+  }, [settings, editor, organization, repoModal]);
   return (
     <AppShell navbar={{ width: 250, breakpoint: 0 }} padding={0}>
       <AppShell.Navbar p="md" className="sidebar">
@@ -710,14 +750,14 @@ function App() {
                 aria-label="按状态筛选"
                 data={statusOptions}
                 value={status}
-                onChange={setStatus}
+                onChange={(value) => setStatus(String(value ?? "all"))}
                 w={148}
               />
               <Select
                 aria-label="排序方式"
                 data={sortOptions}
                 value={sort}
-                onChange={setSort}
+                onChange={(value) => setSort(String(value ?? "status"))}
                 w={158}
               />
               <Checkbox
@@ -877,31 +917,55 @@ function App() {
         )}
       </AppShell.Main>
       <input id="iconUpload" type="file" accept="image/png" hidden />
-      <Settings
-        opened={settings}
-        close={() => setSettings(false)}
-        data={data}
-        run={run}
-        busy={busy}
-      />
-      <Editor
-        project={editor}
-        close={() => setEditor(null)}
-        refresh={refresh}
-      />
-      <Organization
-        projects={organization}
-        groups={groups}
-        close={() => setOrganization(null)}
-        refresh={refresh}
-      />
-      <Repositories
-        state={repoModal}
-        setState={setRepoModal}
-        payload={repos}
-        action={repoAction}
-        busy={busy.has("repositories")}
-      />
+      {(loaded.settings || settings) && (
+        <SurfaceBoundary active={Boolean(settings)}>
+          <Suspense fallback={<LoadingSurface />}>
+            <Settings
+              opened={settings}
+              close={() => setSettings(false)}
+              data={data}
+              run={run}
+              busy={busy}
+            />
+          </Suspense>
+        </SurfaceBoundary>
+      )}
+      {(loaded.editor || editor) && (
+        <SurfaceBoundary active={Boolean(editor)}>
+          <Suspense fallback={<LoadingSurface />}>
+            <Editor
+              project={editor}
+              close={() => setEditor(null)}
+              refresh={refresh}
+            />
+          </Suspense>
+        </SurfaceBoundary>
+      )}
+      {(loaded.organization || organization) && (
+        <SurfaceBoundary active={Boolean(organization)}>
+          <Suspense fallback={<LoadingSurface />}>
+            <Organization
+              projects={organization}
+              groups={groups}
+              close={() => setOrganization(null)}
+              refresh={refresh}
+            />
+          </Suspense>
+        </SurfaceBoundary>
+      )}
+      {(loaded.repositories || repoModal) && (
+        <SurfaceBoundary active={Boolean(repoModal)}>
+          <Suspense fallback={<LoadingSurface />}>
+            <Repositories
+              state={repoModal}
+              setState={setRepoModal}
+              payload={repos}
+              action={repoAction}
+              busy={busy.has("repositories")}
+            />
+          </Suspense>
+        </SurfaceBoundary>
+      )}
     </AppShell>
   );
 }
@@ -1343,645 +1407,9 @@ function PortPanel({ report }) {
     </Accordion>
   );
 }
-function Settings({ opened, close, data, run: perform, busy }) {
-  const [error, setError] = useState("");
-  useEffect(() => {
-    setError("");
-  }, [opened]);
-  const run = (key, action) =>
-    perform(key, async () => {
-      setError("");
-      try {
-        await action();
-      } catch (error) {
-        setError(error.message);
-        throw error;
-      }
-    });
-  const [root, setRoot] = useState("");
-  const config = data?.config || {},
-    roots = config.roots || [];
-  return (
-    <Modal
-      opened={opened}
-      onClose={close}
-      title={<Text fw={700}>设置与服务发现</Text>}
-      size="lg"
-    >
-      <Stack gap="lg">
-        {error && (
-          <Alert color="red" role="alert">
-            {error}
-          </Alert>
-        )}
-        <Text size="sm" c="dimmed">
-          声明服务入口，由本机后端读取配置与子项目关系。
-        </Text>
-        <Paper withBorder p="md">
-          <Title order={4} size="sm" mb="xs">
-            扫描入口
-          </Title>
-          <Text size="xs" c="dimmed" mb="md">
-            添加项目或项目集合的目录。外层 control-panel.json 用 children
-            声明深层子项目。
-          </Text>
-          <Group align="end" wrap="nowrap">
-            <TextInput
-              label="扫描入口路径"
-              placeholder="/Users/you/projects"
-              value={root}
-              onChange={(e) => setRoot(e.currentTarget.value)}
-              style={{ flex: 1 }}
-            />
-            <Button
-              disabled={!root.trim()}
-              loading={busy.has("roots")}
-              onClick={async () => {
-                if (
-                  await run("roots", () =>
-                    api.setProjectRoots([...new Set([...roots, root.trim()])]),
-                  )
-                )
-                  setRoot("");
-              }}
-            >
-              添加入口
-            </Button>
-          </Group>
-          <Select
-            mt="md"
-            label="入口扫描范围"
-            value={String(config.scan?.maxDepth ?? 1)}
-            data={[
-              { value: "0", label: "只读入口本身" },
-              { value: "1", label: "入口与下一层（默认）" },
-            ]}
-            disabled={busy.has("depth")}
-            onChange={(value) =>
-              run("depth", () => api.setScanDepth(Number(value)))
-            }
-          />
-          <Text size="xs" c="dimmed" mt="xs">
-            显式声明的 children 会继续向下发现，不受入口扫描范围影响。
-          </Text>
-          {(data?.scanReport?.issues || []).map((issue, i) => (
-            <Alert key={i} color="orange" mt="sm">
-              {issue.path}：{issue.detail}
-            </Alert>
-          ))}
-          <Stack gap="xs" mt="md">
-            {roots.map((path) => (
-              <Group key={path} wrap="nowrap" justify="space-between">
-                <Text size="xs" className="break-text">
-                  {path}
-                </Text>
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  color="red"
-                  disabled={busy.has("roots")}
-                  onClick={() =>
-                    run("roots", () =>
-                      api.setProjectRoots(roots.filter((r) => r !== path)),
-                    )
-                  }
-                >
-                  移除
-                </Button>
-              </Group>
-            ))}
-            {!roots.length && (
-              <Text size="xs" c="dimmed">
-                还没有扫描目录。
-              </Text>
-            )}
-          </Stack>
-        </Paper>
-        <Paper withBorder p="md">
-          <Switch
-            label="登录时启动后端"
-            description={
-              data?.loginItemStatus?.detail ||
-              (data?.openAtLogin
-                ? "已启用：登录后启动本机后端服务"
-                : "未启用：登录后不自动启动后端")
-            }
-            checked={Boolean(data?.openAtLogin)}
-            disabled={busy.has("login")}
-            onChange={(e) =>
-              run("login", () => api.setOpenAtLogin(e.currentTarget.checked))
-            }
-          />
-        </Paper>
-        <Accordion variant="contained">
-          <Accordion.Item value="info">
-            <Accordion.Control>本机配置与扫描信息</Accordion.Control>
-            <Accordion.Panel>
-              <Stack gap="xs">
-                {[
-                  ["扫描目录", `${roots.length} 个`],
-                  ["配置文件", data?.configPath],
-                  ["状态文件", data?.statePath],
-                  ["最近刷新", timestamp(data?.updatedAt)],
-                ].map(([label, value]) => (
-                  <Box key={label}>
-                    <Text size="xs" c="dimmed">
-                      {label}
-                    </Text>
-                    <Text size="xs" className="break-text">
-                      {value || "—"}
-                    </Text>
-                  </Box>
-                ))}
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-          <Accordion.Item value="example">
-            <Accordion.Control>外层项目声明示例</Accordion.Control>
-            <Accordion.Panel>
-              <Code block>
-                {JSON.stringify(
-                  {
-                    name: "研究工作区",
-                    kind: "collection",
-                    children: [
-                      { path: "repos/api", role: "api" },
-                      { path: "repos/reader/apps/web", role: "frontend" },
-                    ],
-                  },
-                  null,
-                  2,
-                )}
-              </Code>
-              <Text size="xs" c="dimmed" mt="sm">
-                每个子目录保留自己的
-                control-panel.json。纯集合只组织服务，不拥有进程；有独立服务的父项目使用
-                kind: project。
-              </Text>
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
-      </Stack>
-    </Modal>
-  );
-}
-function Editor({ project, close, refresh }) {
-  const [form, setForm] = useState({}),
-    [error, setError] = useState(""),
-    [saving, setSaving] = useState(false);
-  useEffect(() => {
-    if (project) {
-      const url = splitFrontendUrl(project.frontendUrl);
-      setForm({
-        name: project.name,
-        frontendUrl: url.address,
-        frontendPort: url.port,
-        notes: project.notes || "",
-      });
-      setError("");
-    }
-  }, [project]);
-  const field = (name) => ({
-    value: form[name] || "",
-    onChange: (e) =>
-      setForm((old) => ({ ...old, [name]: e.currentTarget.value })),
-  });
-  return (
-    <Modal
-      opened={Boolean(project)}
-      onClose={close}
-      title="服务展示信息"
-      size="lg"
-      closeOnClickOutside={!saving}
-      closeOnEscape={!saving}
-      withCloseButton={!saving}
-    >
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (saving) return;
-          setSaving(true);
-          setError("");
-          try {
-            await api.saveProjectPresentation(project.key, form);
-            close();
-            await refresh();
-          } catch (err) {
-            setError(err.message);
-          } finally {
-            setSaving(false);
-          }
-        }}
-      >
-        <Stack>
-          <Text size="xs" c="dimmed" className="break-text">
-            {project?.manifestPath} · 修改会直接保存到项目自身的
-            control-panel.json。
-          </Text>
-          {error && (
-            <Alert color="red" role="alert">
-              {error}
-            </Alert>
-          )}
-          <TextInput
-            label="服务名称"
-            required
-            maxLength={80}
-            {...field("name")}
-            data-autofocus
-          />
-          <TextInput
-            label="访问地址"
-            type="url"
-            placeholder="http://127.0.0.1"
-            {...field("frontendUrl")}
-          />
-          <NumberInput
-            label="端口（可选）"
-            min={1}
-            max={65535}
-            allowDecimal={false}
-            value={form.frontendPort || ""}
-            onChange={(value) =>
-              setForm((old) => ({ ...old, frontendPort: String(value) }))
-            }
-          />
-          <Textarea label="备注" rows={3} maxLength={500} {...field("notes")} />
-          <Text size="xs" c="dimmed">
-            生命周期命令、工作目录和进程归属由服务自身维护。访问地址和端口会写入
-            frontendUrl。
-          </Text>
-          <Group justify="end">
-            <Button variant="default" onClick={close} disabled={saving}>
-              取消
-            </Button>
-            <Button type="submit" loading={saving}>
-              保存配置
-            </Button>
-          </Group>
-        </Stack>
-      </form>
-    </Modal>
-  );
-}
-function Organization({ projects, groups, close, refresh }) {
-  const [group, setGroup] = useState(""),
-    [tags, setTags] = useState(""),
-    [favorite, setFavorite] = useState(false),
-    [error, setError] = useState(""),
-    [saving, setSaving] = useState(false);
-  const batch = projects?.length > 1;
-  useEffect(() => {
-    if (projects) {
-      setGroup(projects.length > 1 ? "" : projects[0]?.localGroup || "");
-      setTags((projects[0]?.tags || []).join(", "));
-      setFavorite(Boolean(projects[0]?.favorite));
-      setError("");
-    }
-  }, [projects]);
-  return (
-    <Modal
-      opened={Boolean(projects)}
-      onClose={close}
-      title={batch ? "批量归组" : "服务标记与分组"}
-      closeOnClickOutside={!saving}
-      closeOnEscape={!saving}
-      withCloseButton={!saving}
-    >
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (saving) return;
-          setSaving(true);
-          setError("");
-          try {
-            await api.saveProjectOrganization(
-              projects.map((p) => p.key),
-              {
-                group,
-                ...(!batch ? { tags: tags.split(/[,，]/), favorite } : {}),
-              },
-            );
-            close();
-            await refresh();
-          } catch (err) {
-            setError(err.message);
-          } finally {
-            setSaving(false);
-          }
-        }}
-      >
-        <Stack>
-          <Text size="sm" c="dimmed">
-            {batch
-              ? `为所选 ${projects?.length} 个服务设置同一个分组`
-              : projects?.[0]?.name}
-          </Text>
-          {error && (
-            <Alert color="red" role="alert">
-              {error}
-            </Alert>
-          )}
-          <TextInput
-            label="分组"
-            placeholder="输入或选择分组；留空使用所属集合"
-            list="groupOptions"
-            maxLength={40}
-            value={group}
-            onChange={(e) => setGroup(e.currentTarget.value)}
-            data-autofocus
-          />
-          <datalist id="groupOptions">
-            {groups.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
-          {!batch && (
-            <>
-              <TextInput
-                label="标签"
-                placeholder="例如：常驻, 开发, 数据库"
-                value={tags}
-                onChange={(e) => setTags(e.currentTarget.value)}
-              />
-              <Checkbox
-                label="星标服务"
-                checked={favorite}
-                onChange={(e) => setFavorite(e.currentTarget.checked)}
-              />
-            </>
-          )}
-          <Text size="xs" c="dimmed">
-            分组与标记保存在本机。批量归组只修改分组，保留标签与星标。
-          </Text>
-          <Group justify="end">
-            <Button type="submit" loading={saving}>
-              保存
-            </Button>
-          </Group>
-        </Stack>
-      </form>
-    </Modal>
-  );
-}
-function Repositories({ state, setState, payload, action, busy }) {
-  const repositories = payload.repositories || [],
-    locked = busy || payload.busy;
-  const pending = repositories.filter(needsAttention),
-    pulls = repositories.filter((r) => r.behind && !r.ahead),
-    pushes = repositories.filter((r) => r.ahead && !r.behind);
-  const readyPulls = pulls.filter((r) => canSync(r, "pull")).length,
-    readyPushes = pushes.filter((r) => canSync(r, "push")).length;
-  const focused = repositories.find((r) => r.key === state?.key),
-    view = state?.view || "attention";
-  const filterResults = (results) =>
-    (results || []).filter((r) => view !== "project" || r.key === state?.key);
-  const recent = filterResults(payload.lastSync?.results),
-    count = (outcome) => recent.filter((r) => r.outcome === outcome).length;
-  const byService = new Map(
-    repositories.flatMap((r) => r.services.map((s) => [s.key, r.key])),
-  );
-  const parents = new Map(
-    repositories.map((r) => [
-      r.key,
-      r.services
-        .flatMap((s) => s.ancestors || [])
-        .map((a) => byService.get(a.key))
-        .reverse()
-        .find((key) => key && key !== r.key),
-    ]),
-  );
-  const roots =
-    view === "project"
-      ? repositories.filter((r) => r.key === state?.key)
-      : view === "attention"
-        ? pending
-        : view === "pull"
-          ? pulls
-          : view === "push"
-            ? pushes
-            : repositories.filter((r) => !parents.get(r.key));
-  const rows = [];
-  function append(repo, depth = 0) {
-    rows.push({ repo, depth });
-    if (view === "all")
-      repositories
-        .filter((r) => parents.get(r.key) === repo.key)
-        .forEach((r) => append(r, depth + 1));
-  }
-  roots.forEach((r) => append(r));
-  const outcomeLabel = {
-    checked: "已检查",
-    success: "成功",
-    skipped: "跳过",
-    failed: "失败",
-  };
-  const tabs = [
-    ...(focused
-      ? [{ value: "project", label: `当前项目 · ${focused.name}` }]
-      : []),
-    { value: "attention", label: `需要处理 ${pending.length}` },
-    { value: "pull", label: `待拉取 ${pulls.length}` },
-    { value: "push", label: `待推送 ${pushes.length}` },
-    { value: "all", label: `全部仓库 ${repositories.length}` },
-  ];
-  return (
-    <Modal
-      opened={Boolean(state)}
-      onClose={() => setState(null)}
-      title={<Text fw={700}>仓库同步</Text>}
-      size="min(1100px, 92vw)"
-    >
-      <Stack>
-        <Text size="sm" c="dimmed">
-          每天凌晨 03:00 检查，错过后在唤醒或启动时补查。推送与拉取由你执行。
-        </Text>
-        <Group gap="xs">
-          {[
-            [
-              "sync",
-              `处理全部 ${readyPulls + readyPushes}`,
-              readyPulls + readyPushes,
-            ],
-            ["check", "检查所有仓库", 1],
-            ["pull", `拉取全部 ${readyPulls}`, readyPulls],
-            ["push", `推送全部 ${readyPushes}`, readyPushes],
-          ].map(([kind, label, count]) => (
-            <Button
-              key={kind}
-              variant={kind === "sync" ? "filled" : "default"}
-              disabled={locked || !count}
-              onClick={() => action(kind)}
-            >
-              {label}
-            </Button>
-          ))}
-        </Group>
-        <Alert color="orange">
-          <Text size="sm">
-            待拉取 {pulls.length} 个（可处理 {readyPulls}） · 待推送{" "}
-            {pushes.length} 个（可处理 {readyPushes}） · 需人工处理{" "}
-            {
-              pending.filter((r) => !canSync(r, "pull") && !canSync(r, "push"))
-                .length
-            }{" "}
-            个
-          </Text>
-        </Alert>
-        {recent.length > 0 && (
-          <Text
-            size="xs"
-            c={count("failed") || count("skipped") ? "red" : "dimmed"}
-          >
-            最近一次同步：成功 {count("success")} · 失败 {count("failed")} ·
-            跳过 {count("skipped")} · {timestamp(payload.lastSync?.finishedAt)}
-            。失败和跳过原因见仓库及下方逐项结果。
-          </Text>
-        )}
-        <Text size="xs" c={payload.error ? "red" : "dimmed"} role="status">
-          {payload.error ||
-            (payload.busy
-              ? `正在${{ check: "检查", push: "推送", pull: "拉取", sync: "同步" }[payload.operation] || "处理"}：${payload.currentRepository || "仓库…"}${payload.progress ? ` · 已完成 ${payload.progress.completed}/${payload.progress.total}` : ""}`
-              : `${repositories.length} 个仓库 · ${pending.length} 个需要处理 · 最近完成：${timestamp(payload.lastFinishedAt)}`)}
-        </Text>
-        <Text size="xs" c="dimmed">
-          下次计划：{timestamp(payload.nextCheckAt)}（本机时区） · 检查失败 15
-          分钟后重试 · 同一仓库只检查一次
-        </Text>
-        <Group gap="xs" aria-label="仓库筛选">
-          {tabs.map((t) => (
-            <Button
-              key={t.value}
-              size="xs"
-              variant={view === t.value ? "light" : "subtle"}
-              color={view === t.value ? "teal" : "gray"}
-              aria-pressed={view === t.value}
-              onClick={() => setState((old) => ({ ...old, view: t.value }))}
-            >
-              {t.label}
-            </Button>
-          ))}
-        </Group>
-        <Stack gap="sm">
-          {rows.map(({ repo: r, depth }) => (
-            <Paper
-              key={r.key}
-              withBorder
-              p="md"
-              ml={Math.min(depth, 5) * 16}
-              data-repo-key={r.key}
-            >
-              <Group justify="space-between" align="start" wrap="nowrap">
-                <Box className="repo-info">
-                  <Group gap="sm">
-                    <Text size="sm" fw={650}>
-                      {r.name}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      {r.branch
-                        ? `${r.branch} → ${r.upstream || "未配置跟踪分支"}`
-                        : r.status === "pinned"
-                          ? `由父仓库管理 · ${(r.head || "").slice(0, 8)}`
-                          : r.checkedAt
-                            ? "当前未关联本地分支"
-                            : "等待检查分支"}
-                    </Text>
-                  </Group>
-                  <Text size="xs" c="dimmed" mt={5} className="break-text">
-                    {r.directory}
-                  </Text>
-                  <Badge
-                    color={needsAttention(r) ? "orange" : "teal"}
-                    variant="light"
-                    mt="sm"
-                  >
-                    {repoText(r)}
-                  </Badge>
-                  {(needsAttention(r) || r.status === "pinned") && (
-                    <Text size="xs" c="orange.9" mt="xs">
-                      {repoGuidance(r)}
-                    </Text>
-                  )}
-                  {r.lastSyncResult && (
-                    <Text
-                      size="xs"
-                      c={
-                        ["failed", "skipped"].includes(r.lastSyncResult.outcome)
-                          ? "red"
-                          : "dimmed"
-                      }
-                      mt="xs"
-                    >
-                      上次同步（{timestamp(r.lastSyncResult.at)}）·{" "}
-                      {outcomeLabel[r.lastSyncResult.outcome]}：
-                      {r.lastSyncResult.detail}
-                    </Text>
-                  )}
-                  <Text size="xs" c="dimmed" mt="xs">
-                    最后检查：{timestamp(r.checkedAt)}
-                  </Text>
-                  {r.error && (
-                    <Text size="xs" c="red" mt="xs">
-                      {r.error}
-                    </Text>
-                  )}
-                </Box>
-                <Group gap={6} wrap="nowrap">
-                  {[
-                    ["check", "检查"],
-                    ["pull", "拉取"],
-                    ["push", "推送"],
-                  ].map(([kind, label]) => (
-                    <Button
-                      key={kind}
-                      size="xs"
-                      variant="default"
-                      disabled={
-                        locked || (kind !== "check" && !canSync(r, kind))
-                      }
-                      onClick={() => action(kind, [r.key])}
-                    >
-                      {label}
-                    </Button>
-                  ))}
-                </Group>
-              </Group>
-            </Paper>
-          ))}
-          {!rows.length && (
-            <Empty>
-              {repositories.length
-                ? "目前没有符合当前筛选的仓库。"
-                : "当前项目中没有可识别的 Git 仓库。"}
-            </Empty>
-          )}
-        </Stack>
-        {repositoryResults(payload, view === "project" ? state?.key : null).map(
-          (group) => (
-            <Box key={group.title}>
-              <Text fw={650} size="sm" mb="xs">
-                {group.title}
-              </Text>
-              {group.results.map((r, i) => (
-                <Text
-                  key={i}
-                  size="xs"
-                  c={
-                    ["failed", "skipped"].includes(r.outcome) ? "red" : "dimmed"
-                  }
-                  mb={5}
-                >
-                  {r.name} · {outcomeLabel[r.outcome]}：{r.detail}
-                </Text>
-              ))}
-            </Box>
-          ),
-        )}
-      </Stack>
-    </Modal>
-  );
-}
-const styleNonce = document.querySelector('meta[name="style-nonce"]').content;
+const styleNonce = document
+  .querySelector('meta[name="style-nonce"]')
+  .getAttribute("content");
 // Modal scroll locking uses react-style-singleton alongside Mantine styles.
 setNonce(styleNonce);
 

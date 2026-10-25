@@ -126,7 +126,7 @@ const repositories = {
   },
 };
 let calls;
-async function setup(page, fail = "") {
+async function setup(page, fail = "", url = "/") {
   calls = [];
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url()),
@@ -158,10 +158,8 @@ async function setup(page, fail = "") {
             : true;
     await route.fulfill({ json: { data } });
   });
-  await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "全部服务", exact: true }),
-  ).toBeVisible();
+  await page.goto(url);
+  await expect(page.locator("h1")).toHaveText("全部服务");
   await expect(page.locator('[data-project-key="child"]')).toBeVisible();
 }
 test("production assets load under CSP; filters, long labels and keyboard navigation work", async ({
@@ -208,7 +206,7 @@ test("production assets load under CSP; filters, long labels and keyboard naviga
   expect(errors).toEqual([]);
   await page.screenshot({
     animations: "disabled",
-    path: "/tmp/control-panel-mantine-desktop.png",
+    path: "/tmp/control-panel-optimized-desktop.png",
     fullPage: true,
   });
 });
@@ -241,7 +239,9 @@ test("batch organization preserves unrelated preferences and batch results remai
     .check();
   await page.getByRole("button", { name: "批量归组", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("分组", { exact: true }).fill("临时分组");
+  await dialog
+    .getByRole("combobox", { name: "分组", exact: true })
+    .fill("临时分组");
   await dialog.getByRole("button", { name: "保存", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   const call = calls.find((c) => c.action === "save-project-organization");
@@ -271,7 +271,7 @@ test("Mantine modals trap focus, return focus and expose settings and presentati
   await page.keyboard.press("Escape");
   await page.screenshot({
     animations: "disabled",
-    path: "/tmp/control-panel-mantine-settings.png",
+    path: "/tmp/control-panel-optimized-settings.png",
   });
   let releaseDepth;
   await page.route(
@@ -290,7 +290,7 @@ test("Mantine modals trap focus, return focus and expose settings and presentati
   await expect(depth).toBeDisabled();
   await page.screenshot({
     animations: "disabled",
-    path: "/tmp/control-panel-mantine-disabled.png",
+    path: "/tmp/control-panel-optimized-disabled.png",
   });
   await releaseDepth();
   await expect(depth).toBeEnabled();
@@ -308,6 +308,8 @@ test("Mantine modals trap focus, return focus and expose settings and presentati
   const child = page.locator('[data-project-key="child"]');
   await child.getByRole("button", { name: "更多操作", exact: false }).click();
   await page.getByRole("menuitem", { name: "编辑展示信息" }).click();
+  await expect(page.getByRole("textbox", { name: "服务名称" })).toBeVisible();
+  await page.screenshot({ animations: "disabled", path: "/tmp/control-panel-optimized-editor.png" });
   await page.getByRole("textbox", { name: "服务名称" }).fill("新名称");
   await page.getByRole("button", { name: "保存配置", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -342,7 +344,7 @@ test("repository failures survive checks, safe actions and owned-process badges 
   ).toBeDisabled();
   await page.screenshot({
     animations: "disabled",
-    path: "/tmp/control-panel-mantine-repositories.png",
+    path: "/tmp/control-panel-optimized-repositories.png",
   });
 });
 test("desktop compact window, focused long select and disabled states render without clipping", async ({
@@ -364,7 +366,7 @@ test("desktop compact window, focused long select and disabled states render wit
   ).toBe(true);
   await page.screenshot({
     animations: "disabled",
-    path: "/tmp/control-panel-mantine-compact.png",
+    path: "/tmp/control-panel-optimized-compact.png",
     fullPage: true,
   });
   await page
@@ -398,6 +400,19 @@ test("real temporary backend discovers a service, starts it, saves organization 
     await page.getByLabel("扫描入口路径").fill(root);
     await page.getByRole("button", { name: "添加入口", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText(root);
+    const scanDepth = page.getByRole("combobox", { name: "入口扫描范围" });
+    await scanDepth.click();
+    await page
+      .getByRole("option", { name: "只读入口本身", exact: true })
+      .click();
+    await expect(scanDepth).toBeEnabled();
+    await expect(scanDepth).toHaveValue("只读入口本身");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByRole("button", { name: "设置与发现入口" }).click();
+    await expect(
+      page.getByRole("combobox", { name: "入口扫描范围" }),
+    ).toHaveValue("只读入口本身");
     await page.keyboard.press("Escape");
     const service = page
       .locator("[data-project-key]")
@@ -410,7 +425,9 @@ test("real temporary backend discovers a service, starts it, saves organization 
       .getByRole("button", { name: "更多操作", exact: false })
       .click();
     await page.getByRole("menuitem", { name: "标记与分组" }).click();
-    await page.getByLabel("分组", { exact: true }).fill("验收分组");
+    await page
+      .getByRole("combobox", { name: "分组", exact: true })
+      .fill("验收分组");
     await page.getByLabel("标签", { exact: true }).fill("临时, 验证");
     await page.getByRole("button", { name: "保存", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -425,10 +442,156 @@ test("real temporary backend discovers a service, starts it, saves organization 
     expect(JSON.parse(fs.readFileSync(manifest, "utf8")).notes).toBe(
       "真实临时数据验收",
     );
+    await service
+      .getByRole("button", { name: "更多操作", exact: false })
+      .click();
+    await page.getByRole("menuitem", { name: "编辑展示信息" }).click();
+    await expect(page.getByLabel("备注")).toHaveValue("真实临时数据验收");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
     await service.getByRole("button", { name: "停止", exact: true }).click();
     await expect(service).toContainText("已停止");
     expect(fs.existsSync(marker)).toBe(false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("initial network excludes secondary views; lazy navigation has feedback, direct URLs and history", async ({
+  page,
+}) => {
+  const requests = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/ui/"))
+      requests.push(new URL(request.url()).pathname);
+  });
+  await setup(page);
+  const fs = require("node:fs");
+  const report = JSON.parse(fs.readFileSync("dist/bundle-report.json", "utf8"));
+  await expect
+    .poll(() => requests.filter((url) => url.endsWith(".js")).length)
+    .toBe(
+      report.files.filter(
+        (file) =>
+          file.initial &&
+          file.url.startsWith("/ui/") &&
+          file.url.endsWith(".js"),
+      ).length,
+    );
+  expect(
+    requests.some((url) =>
+      /\/(Settings|Editor|Organization|Repositories)-/.test(url),
+    ),
+  ).toBe(false);
+  let release;
+  await page.route(
+    "**/ui/chunks/Settings-*.js",
+    (route) =>
+      new Promise((resolve) => {
+        release = async () => {
+          await route.continue();
+          resolve();
+        };
+      }),
+  );
+  await page.getByRole("button", { name: "设置与发现入口" }).click();
+  await expect(page.getByRole("status")).toContainText("正在加载面板");
+  await expect(
+    page.getByRole("heading", { name: "全部服务", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "全部服务", exact: false }).first(),
+  ).toBeVisible();
+  await release();
+  await expect(page.getByRole("dialog")).toContainText("设置与服务发现");
+  await expect(page).toHaveURL(/view=settings/);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page).not.toHaveURL(/view=/);
+  await page.goBack();
+  await expect(page.getByRole("dialog")).toContainText("设置与服务发现");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "仓库同步", exact: false })
+    .first()
+    .click();
+  await expect(page.getByRole("dialog")).toContainText("仓库同步");
+  await expect(page).toHaveURL(/view=repositories/);
+  expect(requests.some((url) => /\/Editor-/.test(url))).toBe(false);
+  expect(requests.some((url) => /\/Repositories-/.test(url))).toBe(true);
+});
+
+for (const [url, title] of [
+  ["/?view=settings", "设置与服务发现"],
+  ["/?view=repositories&filter=all", "全部仓库 2"],
+]) {
+  test(`direct lazy surface ${url}`, async ({ page }) => {
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await setup(page, "", url);
+    await expect(page.getByRole("dialog")).toContainText(title);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}
+
+test("searchable group combobox filters long options, selects with keyboard and returns focus", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1080, height: 900 });
+  await setup(page);
+  const child = page.locator('[data-project-key="child"]');
+  await child.getByRole("button", { name: "更多操作", exact: false }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  const bounds = await menu.boundingBox();
+  expect(bounds.y).toBeGreaterThanOrEqual(0);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(900);
+  await page.getByRole("menuitem", { name: "标记与分组" }).click();
+  const group = page.getByRole("combobox", { name: "分组", exact: true });
+  await group.fill("常驻服务");
+  const option = page.getByRole("option", {
+    name: projects[1].localGroup,
+    exact: true,
+  });
+  await expect(option).toBeVisible();
+  await page.screenshot({
+    animations: "disabled",
+    path: "/tmp/control-panel-optimized-search-options.png",
+  });
+  await group.press("ArrowDown");
+  await group.press("Enter");
+  await expect(group).toHaveValue(projects[1].localGroup);
+  await group.fill("不存在的分组");
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await group.fill("工作");
+  await expect(option).toBeVisible();
+  await group.press("Escape");
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(group).toBeFocused();
+  await page.screenshot({
+    animations: "disabled",
+    path: "/tmp/control-panel-optimized-search.png",
+  });
+  await group.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("failed secondary chunk shows a scoped error while the service list stays usable", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.route("**/ui/chunks/Settings-*.js", (route) => route.abort());
+  await page.getByRole("button", { name: "设置与发现入口" }).click();
+  await expect(page.getByRole("alert")).toContainText("面板加载失败");
+  await expect(
+    page.getByRole("heading", { name: "全部服务", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("textbox", { name: "搜索服务" }).fill("异常服务");
+  await expect(page.locator('[data-project-key="error"]')).toBeVisible();
+  await expect(page.locator('[data-project-key="child"]')).toHaveCount(0);
 });

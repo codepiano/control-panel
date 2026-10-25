@@ -18,13 +18,31 @@
     [
       "npm",
       "run",
+      "check:dependencies"
+    ],
+    [
+      "npm",
+      "run",
+      "typecheck"
+    ],
+    [
+      "npm",
+      "run",
       "build"
+    ],
+    [
+      "npm",
+      "run",
+      "check:bundle"
     ]
   ],
   "outputs": [
     "src/server.js",
     "dist/app.js",
-    "dist/app.css"
+    "dist/app.css",
+    "dist/manifest.json",
+    "dist/app.js.map",
+    "dist/app.css.map"
   ],
   "persistent": [],
   "runtimeFiles": [

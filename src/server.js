@@ -12,12 +12,19 @@ async function createServer({ autoStart = true } = {}) {
   const files = new Map([
     ['/', ['src/index.html', 'text/html; charset=utf-8']],
     ['/index.html', ['src/index.html', 'text/html; charset=utf-8']],
-    ['/ui/app.css', ['dist/app.css', 'text/css; charset=utf-8']],
-    ['/ui/app.js', ['dist/app.js', 'text/javascript; charset=utf-8']],
     ['/client.js', ['src/client.js', 'text/javascript; charset=utf-8']],
     ['/project-tree.js', ['src/project-tree.js', 'text/javascript; charset=utf-8']],
     ['/assets/app-icon.png', ['assets/app-icon.png', 'image/png']],
+    ['/assets/favicon.png', ['assets/favicon.png', 'image/png']],
   ]);
+  const manifestPath = path.join(__dirname, '../dist/manifest.json');
+  if (!fs.existsSync(manifestPath)) throw new Error('前端资源未构建，请先运行 npm ci && npm run build');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  for (const file of manifest.files) {
+    if (!/^(?:chunks\/)?[a-zA-Z0-9_-]+\.(?:js|css)(?:\.map)?$/.test(file)) throw new Error('非法前端资源路径');
+    const type = file.endsWith('.map') ? 'application/json; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8';
+    files.set(`/ui/${file}`, [`dist/${file}`, type]);
+  }
   const server = http.createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const reply = (status, data) => {
@@ -63,7 +70,7 @@ async function createServer({ autoStart = true } = {}) {
       }
       const file = files.get(url.pathname);
       if (req.method !== 'GET' || !file) { reply(404, { error: '未找到' }); return; }
-      res.writeHead(200, { 'Content-Type': file[1], 'Cache-Control': 'no-cache' });
+      res.writeHead(200, { 'Content-Type': file[1], 'Cache-Control': url.pathname.startsWith('/ui/chunks/') ? 'public, max-age=31536000, immutable' : 'no-cache' });
       const content = fs.readFileSync(path.join(__dirname, '..', file[0]));
       res.end(file[0] === 'src/index.html' ? content.toString().replace('__STYLE_NONCE__', styleNonce) : content);
     } catch (error) { reply(400, { error: String(error.message || error) }); }
@@ -73,7 +80,7 @@ async function createServer({ autoStart = true } = {}) {
 }
 
 if (require.main === module) {
-  for (const file of ['app.js', 'app.css']) {
+  for (const file of ['app.js', 'app.css', 'manifest.json']) {
     if (!fs.existsSync(path.join(__dirname, '../dist', file))) throw new Error('前端资源未构建，请先运行 npm ci && npm run build');
   }
   const port = Number(process.env.CONTROL_PANEL_PORT || 4310);

@@ -23,9 +23,24 @@ npm start
 
 后台启动会输出访问地址、Node 版本、配置/状态/日志路径，等待实际 HTTP 就绪后显示进程 PID、服务数量和发现问题数量；等待期间显示初始化进度，失败会打印日志尾部。
 
-`npm run build` 使用 esbuild 将 `src/ui/app.jsx` 与 Mantine 样式打包到 `dist/`。`npm start` 和 `npm run dev` 会先构建；dev 使用 Node 的 watch 模式，前端修改后需要重新构建。发布准备阶段在独立产物目录中执行 `npm ci` 和 `npm run build`，构建成功后才能切换。
+`npm run build` 使用 esbuild 将 `src/ui/app.jsx` 与 Mantine 样式打包到 `dist/`，生成 ESM 分块、sourcemap、资源白名单和逐文件体积报告。`npm start` 和 `npm run dev` 会先构建；dev 使用 Node 的 watch 模式，前端修改后需要重新构建。发布准备阶段在独立产物目录中安装依赖，核对依赖版本，执行类型检查、构建与包体积回归检查；全部成功后才能切换。
 
 验证必须在独立 checkout 中进行，使用独立依赖、构建输出、缓存与临时数据。`npm test` 运行后端和页面模型测试；`npm run test:ui` 使用 Playwright 启动 `127.0.0.1:19431` 的临时后端，浏览器上下文拦截 API 并使用固定测试数据，大部分写入为模拟调用，另有临时目录中的真实服务启停与配置保存验收，不访问在线项目。首次运行先执行 `npx playwright install chromium`，或用 `PLAYWRIGHT_CHROME_PATH` 指定 Chrome 可执行文件；该方式启动独立浏览器进程和临时浏览器配置，不复用个人标签页。浏览器回归覆盖服务操作重试、批量结果、归组、长名称、桌面紧凑窗口、下拉框键盘、弹窗焦点、仓库同步历史和子服务归属。
+
+设置、仓库同步、展示信息编辑和归组面板使用 `React.lazy` 按需加载，导航和服务列表在加载期间保持可用。设置支持 `/?view=settings`，仓库同步支持 `/?view=repositories&filter=all`，浏览器前进后退可切换面板。公共 Mantine 入口、主题、弹窗焦点适配与组件样式集中在 `src/ui/components*.jsx`、`theme.js`、`modal.jsx`、`mantine-styles.css`，业务页面不直接导入 Mantine。原图保留在 `assets/app-icon.png`，32 像素 favicon 为单独资源。
+
+在独立 checkout 中运行：
+
+```bash
+npm run check:dependencies
+npm run typecheck
+npm run build
+npm run check:bundle
+npm test
+npm run test:ui
+```
+
+`check:bundle` 沿构建依赖图检查完整首屏资源及每个文件的 gzip 之和，防止次级面板或浮层组件回到首屏；同时核对选用的 Mantine 样式覆盖内部依赖，并验证应用与上游 Mantine 的真实 sourcemap 定位。源码、原图与测量口径详见 [升级与优化报告](docs/react-mantine-upgrade.md)。gzip 数据为逐文件 level 9 压缩的比较指标，当前 Node 服务不发送 gzip 编码。
 
 ## 分组、标记和批量启动
 

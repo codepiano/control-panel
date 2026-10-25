@@ -4,7 +4,7 @@ module.exports = defineConfig({
   timeout: 30000,
   fullyParallel: false,
   workers: 1,
-  outputDir: "/tmp/control-panel-mantine-results",
+  outputDir: "/tmp/control-panel-optimize-results",
   use: {
     baseURL: "http://127.0.0.1:19431",
     viewport: { width: 1440, height: 1000 },
