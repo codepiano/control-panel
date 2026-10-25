@@ -255,6 +255,11 @@ test("batch organization preserves unrelated preferences and batch results remai
 test("Mantine modals trap focus, return focus and expose settings and presentation fields", async ({
   page,
 }) => {
+  const errors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
   await setup(page);
   const settings = page.getByRole("button", { name: "设置与发现入口" });
   await settings.click();
@@ -309,6 +314,7 @@ test("Mantine modals trap focus, return focus and expose settings and presentati
   expect(
     calls.find((c) => c.action === "save-project-presentation").args[0],
   ).toBe("child");
+  expect(errors).toEqual([]);
 });
 test("repository failures survive checks, safe actions and owned-process badges stay correct", async ({
   page,

@@ -19,7 +19,8 @@
     "@mantine/hooks": "9.7.3",
     "@tabler/icons-react": "3.49.0",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "get-nonce": "1.0.1"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",

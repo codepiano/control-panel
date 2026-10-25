@@ -51,6 +51,7 @@ import {
   IconSettings,
   IconStar,
 } from "@tabler/icons-react";
+import { setNonce } from "get-nonce";
 import model from "./model.cjs";
 import "@mantine/core/styles.css";
 import "./styles.css";
@@ -1980,13 +1981,15 @@ function Repositories({ state, setState, payload, action, busy }) {
     </Modal>
   );
 }
+const styleNonce = document.querySelector('meta[name="style-nonce"]').content;
+// Modal scroll locking uses react-style-singleton alongside Mantine styles.
+setNonce(styleNonce);
+
 createRoot(document.getElementById("root")).render(
   <MantineProvider
     theme={theme}
     forceColorScheme="light"
-    getStyleNonce={() =>
-      document.querySelector('meta[name="style-nonce"]').content
-    }
+    getStyleNonce={() => styleNonce}
   >
     <App />
   </MantineProvider>,
