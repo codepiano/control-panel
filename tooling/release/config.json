@@ -10,9 +10,21 @@
       "./scripts/status.sh"
     ]
   },
-  "prepare": [],
+  "prepare": [
+    [
+      "npm",
+      "ci"
+    ],
+    [
+      "npm",
+      "run",
+      "build"
+    ]
+  ],
   "outputs": [
-    "src/server.js"
+    "src/server.js",
+    "dist/app.js",
+    "dist/app.css"
   ],
   "persistent": [],
   "runtimeFiles": [

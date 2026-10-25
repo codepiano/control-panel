@@ -3,81 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="style-nonce" content="__STYLE_NONCE__" />
   <title>Control Panel · 本机服务</title>
   <link rel="icon" href="/assets/app-icon.png" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/ui/app.css" />
 </head>
 <body>
-  <div id="appLayout" class="app-layout">
-    <aside class="sidebar" aria-label="服务导航">
-      <button id="sidebarCloseBtn" class="mobile-nav sidebar-close" aria-label="收起导航">×</button>
-      <a class="brand" href="/" aria-label="Control Panel 首页"><span class="brand-symbol">C<span>·</span>P</span><span>Control Panel<small>本机服务工作台</small></span></a>
-      <div class="machine-label"><span class="live-dot"></span>LOCAL WORKSPACE</div>
-      <button id="repositorySyncNav" class="nav-item"><span>仓库同步</span><span id="repositoryPendingCount" class="nav-count">—</span></button>
-      <nav class="view-nav" aria-label="快捷视图">
-        <button id="navAllBtn" class="nav-item is-active"><span>全部服务</span><span id="allNavCount" class="nav-count">0</span></button>
-        <button id="navRunningBtn" class="nav-item"><span>运行中</span><span id="runningNavCount" class="nav-count">0</span></button>
-        <button id="navFavoritesBtn" class="nav-item"><span>星标服务</span><span id="favoriteNavCount" class="nav-count">0</span></button>
-      </nav>
-      <div class="nav-section"><h2>项目层级</h2><div id="projectNav" class="scope-nav project-nav"></div></div>
-      <div class="nav-section"><h2>个人分组</h2><div id="groupNav" class="scope-nav"></div></div>
-      <div class="nav-section"><h2>标签</h2><div id="tagNav" class="tag-nav"></div></div>
-      <div class="sidebar-bottom"><div class="backend-status"><span class="live-dot"></span><span id="backendStatus">本机后端已连接</span></div><span id="backendUptime" class="backend-uptime">正在读取运行时长</span><button id="configBtn" class="settings-nav">设置与发现入口 <span>↗</span></button></div>
-    </aside>
-    <main class="workspace">
-      <header class="workspace-header"><div class="breadcrumb"><button id="navToggleBtn" class="icon-button mobile-nav" aria-label="展开导航">☰</button><span>本机</span><span class="breadcrumb-separator">/</span><strong>服务管理</strong></div><div class="header-tools"><span id="refreshIndicator" class="refresh-indicator" data-state="pending" role="img" aria-label="正在连接后端" title="正在连接后端"></span><button id="checkRepositoriesBtn" class="button subtle">检查仓库同步</button><button id="refreshBtn" class="button subtle">刷新</button><button id="configFileBtn" class="button subtle">配置文件</button></div></header>
-      <div class="workspace-body">
-        <div class="page-heading"><div><p class="eyebrow">YOUR LOCAL SERVICES</p><h1 id="viewTitle">全部服务</h1><p id="viewDescription" class="page-description">把分散的服务组织起来，随时启动你需要的工作环境。</p></div><div class="page-action"><button id="startVisibleBtn" class="button primary" disabled>启动当前列表 <span>↗</span></button></div></div>
-        <section class="overview" aria-label="服务运行概况"><div><span class="overview-label">服务总览</span><strong id="runningSummary">0 个服务 · 0 个运行中</strong></div><div class="overview-stat"><span id="healthIndicator" class="live-dot" data-state="idle"></span><span id="healthSummary">等待刷新</span></div><div class="overview-stat"><strong id="runningMetric">0</strong><span>运行中</span></div><div class="overview-stat"><strong id="autoStartMetric">0</strong><span>随面板启动</span></div><div class="overview-stat"><strong id="attentionMetric">0</strong><span>需要关注</span></div></section>
-        <details id="portPanel" class="panel port-panel"><summary id="portSummary">本机端口分配</summary><p class="field-help">访问地址与指标地址预留本机端口，停止的服务仍保留分配。修改地址后，请同步修改服务启动配置。</p><p id="portSuggestions" class="field-help"></p><div class="port-table-wrap"><table class="port-table"><thead><tr><th>端口</th><th>已分配服务</th><th>监听进程</th><th>检查结果</th></tr></thead><tbody id="portRows"></tbody></table></div></details>
-        <section class="service-area" aria-label="服务列表">
-          <div class="list-toolbar"><label class="search-field"><span aria-hidden="true" class="search-symbol">⌕</span><span class="sr-only">搜索服务</span><input id="projectSearch" type="search" placeholder="搜索名称、路径、角色或标签…" autocomplete="off" /></label><div class="list-filters"><label class="select-field"><span class="sr-only">按状态筛选</span><select id="statusFilter"><option value="all">全部状态</option><option value="running">运行中</option><option value="stopped">已停止</option><option value="starting">启动中</option><option value="stopping">停止中</option><option value="error">错误</option></select></label><label class="select-field"><span class="sr-only">排序方式</span><select id="sortProjects"><option value="status">运行中优先</option><option value="name">按名称排序</option><option value="recent">最近启动</option></select></label><label class="check-label favorite-filter"><input id="favoriteFilter" type="checkbox" />只看星标</label></div></div>
-          <select id="groupFilter" hidden aria-label="服务分组"><option value="all">全部分组</option></select><select id="tagFilter" hidden aria-label="标签筛选"><option value="all">全部标签</option></select>
-          <div class="table-header"><label class="check-label"><input id="selectVisible" type="checkbox" aria-label="选择当前列表" /><span>服务 / 所属工作区</span></label><span>运行状态与时长</span><span>操作</span></div>
-          <div id="batchResult" class="batch-result hidden" role="status" aria-live="polite"></div>
-          <div id="projectList" class="project-groups"></div>
-        </section>
-        <footer class="workspace-footnote"><span id="visibleCount">0 个服务</span><span>数据与操作均在本机 · 后端每 30 秒检查状态</span></footer>
-      </div>
-      <div id="selectionBar" class="selection-bar hidden" aria-label="批量操作"><span id="selectionCount">已选 0 项</span><span class="selection-note">可跨分组选择服务</span><div class="selection-actions"><button id="clearSelectionBtn" class="button subtle" disabled>清空</button><button id="batchGroupBtn" class="button secondary" disabled>批量归组</button><button id="batchStartBtn" class="button primary" disabled>启动所选</button></div></div>
-    </main>
-  </div>
-
-  <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-hidden="true"><div class="modal-card settings-card">
-    <div class="modal-header"><div><p class="eyebrow">WORKSPACE SETTINGS</p><h2 id="settingsTitle">设置与服务发现</h2><p>声明服务入口，由本机后端读取配置与子项目关系。</p></div><button id="closeSettingsBtn" class="button subtle">关闭</button></div>
-    <section class="panel"><h3>扫描入口</h3><p class="field-help">添加项目或项目集合的目录。外层 control-panel.json 用 children 声明深层子项目。</p><div class="field-row"><input id="rootInput" type="text" placeholder="/Users/you/projects" aria-label="扫描入口路径" /><button id="addRootBtn" class="button primary">添加入口</button></div><label class="select-field scan-range">入口扫描范围<select id="scanDepth"><option value="0">只读入口本身</option><option value="1">入口与下一层（默认）</option></select></label><p class="field-help">显式声明的 children 会继续向下发现，不受入口扫描范围影响。</p><div id="scanIssues" role="status"></div><div id="rootList" class="root-list"></div></section>
-    <section class="panel"><label class="toggle-row"><span><strong>登录时启动后端</strong><small id="loginItemStatus">登录后启动本机服务，不自动打开浏览器</small></span><input id="loginToggle" type="checkbox" /></label></section>
-    <section class="panel"><details class="info-panel"><summary>本机配置与扫描信息</summary><div class="meta"><div><span class="label">扫描目录</span><span id="rootsCount" class="value">-</span></div><div><span class="label">配置文件</span><span id="configPath" class="value">-</span></div><div><span class="label">最近刷新</span><span id="updatedAt" class="value">-</span></div><div><span class="label">状态文件</span><span id="statePath" class="value">-</span></div></div></details></section>
-    <section class="panel spec"><h3>外层项目声明示例</h3><pre>{
-  "name": "研究工作区",
-  "kind": "collection",
-  "children": [
-    { "path": "repos/api", "role": "api" },
-    { "path": "repos/reader/apps/web", "role": "frontend" }
-  ]
-}</pre><p class="field-help">每个子目录保留自己的 control-panel.json。纯集合只组织服务，不拥有进程；有独立服务的父项目使用 kind: project。</p></section>
-  </div></div>
-
-  <div id="projectEditorModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="projectEditorTitle" aria-hidden="true"><form id="projectEditorForm" class="modal-card project-editor"><div class="modal-header"><div><p class="eyebrow">SERVICE CONFIGURATION</p><h2 id="projectEditorTitle">服务展示信息</h2><p id="projectEditorHint">保存到服务自身的 control-panel.json。</p></div><button id="closeProjectEditorBtn" class="button subtle" type="button">关闭</button></div><p id="projectEditorError" class="form-error hidden" role="alert"></p><section class="panel form-grid"><label>服务名称<input name="name" required maxlength="80" /></label><label>访问地址<input name="frontendUrl" type="url" placeholder="http://127.0.0.1" /></label><label>端口（可选）<input name="frontendPort" type="number" min="1" max="65535" step="1" placeholder="5173" /></label><label class="full-width">备注<textarea name="notes" rows="3" maxlength="500"></textarea></label></section><p class="field-help">生命周期命令、工作目录和进程归属由服务自身维护。访问地址和端口会写入 frontendUrl。</p><div class="form-actions"><button id="cancelProjectEditorBtn" class="button secondary" type="button">取消</button><button id="saveProjectEditorBtn" class="button primary" type="submit">保存配置</button></div></form></div>
-
-  <div id="repositorySyncModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="repositorySyncTitle" aria-hidden="true"><section class="modal-card repository-sync-card">
-    <div class="modal-header"><div><p class="eyebrow">REPOSITORY SYNC</p><h2 id="repositorySyncTitle">仓库同步</h2><p>每天凌晨 03:00 检查，错过后在唤醒或启动时补查。推送与拉取由你执行。</p></div><button id="closeRepositorySyncBtn" class="button subtle">关闭</button></div>
-    <div class="repository-toolbar"><button id="syncAllRepositoriesBtn" class="button primary">处理全部</button><button id="checkAllRepositoriesBtn" class="button secondary">检查所有仓库</button><button id="pullAllRepositoriesBtn" class="button secondary">拉取全部可更新仓库</button><button id="pushAllRepositoriesBtn" class="button secondary">推送全部待推仓库</button></div>
-    <p id="repositoryOperationSummary" role="status" aria-live="polite" hidden></p><p id="repositoryActionSummary" class="repository-action-summary"></p><p id="repositorySyncStatus" role="status" aria-live="polite"></p><p id="repositorySchedule" class="field-help"></p>
-    <div class="repository-view-tabs" role="group" aria-label="仓库筛选"><button id="repositoryProjectBtn" class="button secondary" aria-pressed="false" hidden>当前项目</button><button id="repositoryAttentionBtn" class="button secondary" aria-pressed="true">需要处理</button><button id="repositoryPullBtn" class="button secondary" aria-pressed="false">待拉取</button><button id="repositoryPushBtn" class="button secondary" aria-pressed="false">待推送</button><button id="repositoryAllBtn" class="button secondary" aria-pressed="false">全部仓库</button></div><div id="repositoryList" class="repository-list"></div><div id="repositoryResults" class="repository-results" role="status"></div>
-  </section></div>
-
-  <input id="iconUpload" type="file" accept="image/png" hidden />
-  <div id="organizationModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="organizationTitle" aria-hidden="true"><form id="organizationForm" class="modal-card project-editor"><div class="modal-header"><div><p class="eyebrow">ORGANIZE SERVICES</p><h2 id="organizationTitle">服务标记与分组</h2><p id="organizationHint"></p></div><button id="closeOrganizationBtn" class="button subtle" type="button">关闭</button></div><p id="organizationError" class="form-error hidden" role="alert"></p><section class="panel form-grid"><label class="full-width">分组<input name="group" list="groupOptions" maxlength="40" placeholder="输入或选择分组；留空使用所属集合" /></label><datalist id="groupOptions"></datalist><label id="tagsField" class="full-width">标签<input name="tags" placeholder="例如：常驻, 开发, 数据库" /></label><label id="favoriteField" class="check-label"><input name="favorite" type="checkbox" />星标服务</label></section><p class="field-help">分组与标记保存在本机。批量归组只修改分组，保留标签与星标。</p><div class="form-actions"><button id="saveOrganizationBtn" class="button primary" type="submit">保存</button></div></form></div>
-
-  <template id="projectTemplate"><section class="card">
-    <label class="project-select"><input class="project-checkbox" type="checkbox" /><span class="sr-only">选择服务</span></label>
-    <button class="project-icon-button" type="button" title="设置项目图标"><img class="project-icon-image" src="/assets/app-icon.png" alt="" hidden /><span class="project-icon-fallback" aria-hidden="true"></span></button>
-    <div class="project-identity"><div class="project-title-row"><h3 class="project-name"></h3><p class="project-notes"></p></div><div class="project-labels"></div><p class="project-output" role="status"></p></div>
-    <div class="project-runtime"><span class="status-pill"></span><span class="runtime-field project-uptime"></span><span class="runtime-field project-pid"></span><span class="runtime-field project-port"></span></div>
-    <div class="project-controls"><div class="card-actions"><button class="homepage-btn button subtle">打开</button><button class="primary-action button"></button><details class="project-menu"><summary aria-label="更多操作">•••</summary><div class="project-menu-list"><button class="organization-btn ghost" type="button">标记与分组</button><button class="favorite-btn ghost" type="button">星标</button><button class="detail-toggle ghost" type="button">查看详情</button><button class="restart-btn ghost">重新启动</button><button class="check-repository-btn ghost" type="button">检查代码更新</button><button class="repository-btn ghost">打开仓库</button><button class="folder-btn ghost">在 Finder 中打开</button><button class="panel-start-btn ghost">随面板启动</button><button class="project-icon-btn ghost">上传自定义图标</button><button class="reset-project-icon-btn ghost">恢复项目图标</button><button class="project-config-btn ghost">编辑展示信息</button></div></details></div></div>
-    <div class="project-details hidden"><div class="card-meta"><div class="meta-field"><span class="label">启动次数</span><span class="project-usage value"></span></div><div class="meta-field"><span class="label">最近启动</span><span class="project-last-started value"></span></div><div class="meta-field"><span class="label">运行时长</span><span class="project-uptime-detail value"></span></div><div class="meta-field"><span class="label">进程 ID</span><span class="project-pid-detail value"></span></div><div class="meta-field"><span class="label">图标来源</span><span class="project-icon-source value"></span></div><div class="meta-field"><span class="label">配置来源</span><span class="project-source value"></span></div><div class="meta-field"><span class="label">随面板启动</span><span class="project-panel-start value"></span></div><div class="meta-field"><span class="label">所属关系</span><span class="project-root value"></span></div><div class="meta-field"><span class="label">服务目录</span><span class="project-dir value"></span></div><div class="meta-field"><span class="label">最近输出</span><span class="project-output-detail value"></span></div></div></div>
-  </section></template>
-  <script src="/client.js"></script><script src="/project-tree.js"></script><script src="/renderer.js"></script>
+  <div id="root"></div>
+  <script src="/client.js"></script>
+  <script src="/project-tree.js"></script>
+  <script defer src="/ui/app.js"></script>
 </body>
 </html>
