@@ -12,12 +12,19 @@ async function createServer({ autoStart = true } = {}) {
   const files = new Map([
     ['/', ['src/index.html', 'text/html; charset=utf-8']],
     ['/index.html', ['src/index.html', 'text/html; charset=utf-8']],
-    ['/styles.css', ['src/styles.css', 'text/css; charset=utf-8']],
     ['/client.js', ['src/client.js', 'text/javascript; charset=utf-8']],
     ['/project-tree.js', ['src/project-tree.js', 'text/javascript; charset=utf-8']],
-    ['/renderer.js', ['src/renderer.js', 'text/javascript; charset=utf-8']],
     ['/assets/app-icon.png', ['assets/app-icon.png', 'image/png']],
+    ['/assets/favicon.png', ['assets/favicon.png', 'image/png']],
   ]);
+  const manifestPath = path.join(__dirname, '../dist/manifest.json');
+  if (!fs.existsSync(manifestPath)) throw new Error('前端资源未构建，请先运行 npm ci && npm run build');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  for (const file of manifest.files) {
+    if (!/^(?:chunks\/)?[a-zA-Z0-9_-]+\.(?:js|css)(?:\.map)?$/.test(file)) throw new Error('非法前端资源路径');
+    const type = file.endsWith('.map') ? 'application/json; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8';
+    files.set(`/ui/${file}`, [`dist/${file}`, type]);
+  }
   const server = http.createServer(async (req, res) => {
     const address = server.address();
     if (!address) { res.writeHead(503, { Connection: 'close' }); res.end(); return; }
@@ -26,8 +33,9 @@ async function createServer({ autoStart = true } = {}) {
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(data));
     };
+    const styleNonce = crypto.randomBytes(18).toString('base64');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', `default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'nonce-${styleNonce}'; style-src-attr 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
     if (req.headers.host !== new URL(origin).host || (req.headers.origin && req.headers.origin !== origin) || req.headers['sec-fetch-site'] === 'cross-site') {
       reply(403, { error: '仅允许本机同源访问' }); return;
     }
@@ -64,8 +72,9 @@ async function createServer({ autoStart = true } = {}) {
       }
       const file = files.get(url.pathname);
       if (req.method !== 'GET' || !file) { reply(404, { error: '未找到' }); return; }
-      res.writeHead(200, { 'Content-Type': file[1], 'Cache-Control': 'no-cache' });
-      res.end(fs.readFileSync(path.join(__dirname, '..', file[0])));
+      res.writeHead(200, { 'Content-Type': file[1], 'Cache-Control': url.pathname.startsWith('/ui/chunks/') ? 'public, max-age=31536000, immutable' : 'no-cache' });
+      const content = fs.readFileSync(path.join(__dirname, '..', file[0]));
+      res.end(file[0] === 'src/index.html' ? content.toString().replace('__STYLE_NONCE__', styleNonce) : content);
     } catch (error) { reply(400, { error: String(error.message || error) }); }
   });
   server.on('close', core.shutdown);
@@ -73,6 +82,9 @@ async function createServer({ autoStart = true } = {}) {
 }
 
 if (require.main === module) {
+  for (const file of ['app.js', 'app.css', 'manifest.json']) {
+    if (!fs.existsSync(path.join(__dirname, '../dist', file))) throw new Error('前端资源未构建，请先运行 npm ci && npm run build');
+  }
   const port = Number(process.env.CONTROL_PANEL_PORT || 4310);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('CONTROL_PANEL_PORT 应为 1–65535');
   console.log(`[${new Date().toISOString()}] 正在加载配置、发现服务并检查状态…`);

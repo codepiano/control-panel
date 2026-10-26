@@ -1,0 +1,126 @@
+{
+  "scope": "HTML, transitive static JS/CSS imports, legacy scripts and favicon; maps, API data and user icons excluded",
+  "files": [
+    {
+      "url": "/",
+      "file": "src/index.html",
+      "initial": true,
+      "bytes": 530,
+      "gzip": 338
+    },
+    {
+      "url": "/client.js",
+      "file": "src/client.js",
+      "initial": true,
+      "bytes": 3397,
+      "gzip": 1373
+    },
+    {
+      "url": "/project-tree.js",
+      "file": "src/project-tree.js",
+      "initial": true,
+      "bytes": 1827,
+      "gzip": 674
+    },
+    {
+      "url": "/assets/favicon.png",
+      "file": "assets/favicon.png",
+      "initial": true,
+      "bytes": 3028,
+      "gzip": 3051
+    },
+    {
+      "url": "/ui/app.js",
+      "file": "dist/app.js",
+      "initial": true,
+      "bytes": 33491,
+      "gzip": 10960
+    },
+    {
+      "url": "/ui/react-runtime.js",
+      "file": "dist/react-runtime.js",
+      "initial": false,
+      "bytes": 195,
+      "gzip": 151
+    },
+    {
+      "url": "/ui/chunks/chunk-5NVHNXZA.js",
+      "file": "dist/chunks/chunk-5NVHNXZA.js",
+      "initial": true,
+      "bytes": 209010,
+      "gzip": 65128
+    },
+    {
+      "url": "/ui/chunks/Settings-TWDV6A7C.js",
+      "file": "dist/chunks/Settings-TWDV6A7C.js",
+      "initial": false,
+      "bytes": 4776,
+      "gzip": 2029
+    },
+    {
+      "url": "/ui/chunks/Editor-UJ3BF3VP.js",
+      "file": "dist/chunks/Editor-UJ3BF3VP.js",
+      "initial": false,
+      "bytes": 2413,
+      "gzip": 1309
+    },
+    {
+      "url": "/ui/chunks/Organization-JWBDD53O.js",
+      "file": "dist/chunks/Organization-JWBDD53O.js",
+      "initial": false,
+      "bytes": 2308,
+      "gzip": 1253
+    },
+    {
+      "url": "/ui/chunks/Repositories-KT547L7W.js",
+      "file": "dist/chunks/Repositories-KT547L7W.js",
+      "initial": false,
+      "bytes": 6446,
+      "gzip": 2638
+    },
+    {
+      "url": "/ui/chunks/chunk-5H4NUGR6.js",
+      "file": "dist/chunks/chunk-5H4NUGR6.js",
+      "initial": true,
+      "bytes": 270,
+      "gzip": 224
+    },
+    {
+      "url": "/ui/chunks/chunk-4EJXPPV4.js",
+      "file": "dist/chunks/chunk-4EJXPPV4.js",
+      "initial": false,
+      "bytes": 45850,
+      "gzip": 16299
+    },
+    {
+      "url": "/ui/chunks/chunk-ZZM62Z5U.js",
+      "file": "dist/chunks/chunk-ZZM62Z5U.js",
+      "initial": true,
+      "bytes": 293000,
+      "gzip": 89441
+    },
+    {
+      "url": "/ui/chunks/chunk-E6URHSBL.js",
+      "file": "dist/chunks/chunk-E6URHSBL.js",
+      "initial": true,
+      "bytes": 12393,
+      "gzip": 4395
+    },
+    {
+      "url": "/ui/app.css",
+      "file": "dist/app.css",
+      "initial": true,
+      "bytes": 123684,
+      "gzip": 18696
+    }
+  ],
+  "initial": {
+    "bytes": 680630,
+    "gzip": 194280
+  },
+  "all": {
+    "bytes": 742618,
+    "gzip": 217959
+  },
+  "warnings": []
+}
