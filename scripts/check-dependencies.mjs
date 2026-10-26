@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
-const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
+const lock = await readFile("pnpm-lock.yaml", "utf8");
+// Package keys are top-level entries in the packages section; peer snapshots
+// are excluded so one resolution is counted once.
+// pnpm 12 has separate YAML documents for its bootstrap and application graph.
+const packages = [...lock.matchAll(/(?:^|\n)packages:\n([\s\S]*?)(?=\nsnapshots:\n|$)/g)]
+  .map((match) => match[1]).join("\n");
+const keys = [...packages.matchAll(/^  ['"]?(\S[^\n]*?)['"]?:$/gm)].map((match) => match[1]);
 for (const name of [
   "react",
   "react-dom",
@@ -16,15 +22,9 @@ for (const name of [
     /^\d+\.\d+\.\d+$/,
     `${name} must pin a stable release`,
   );
-  assert.equal(lock.packages["node_modules/" + name].version, selected);
-  const copies = Object.keys(lock.packages).filter((path) =>
-    path.endsWith("node_modules/" + name),
-  );
-  assert.equal(
-    copies.length,
-    1,
-    `Multiple copies of ${name}: ${copies.join(", ")}`,
-  );
+  const copies = keys.filter((key) => key.startsWith(`${name}@`));
+  assert.deepEqual(copies, [`${name}@${selected}`],
+    `Expected one locked version of ${name}: ${copies.join(", ")}`);
   assert.equal(
     JSON.parse(await readFile("node_modules/" + name + "/package.json", "utf8"))
       .version,

@@ -80,8 +80,9 @@ assert.ok(
 const runtime = Object.entries(meta.outputs).find(
   ([file, output]) =>
     file.endsWith(".js") &&
-    output.inputs["node_modules/react-dom/cjs/react-dom-client.production.js"]
-      ?.bytesInOutput > 0,
+    Object.entries(output.inputs).some(([path, input]) =>
+      path.endsWith("/react-dom/cjs/react-dom-client.production.js") && input.bytesInOutput > 0
+    ),
 );
 assert.match(
   runtime[0],

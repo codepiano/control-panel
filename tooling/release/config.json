@@ -12,28 +12,44 @@
   },
   "prepare": [
     [
-      "npm",
-      "ci"
+      "node",
+      "scripts/check-toolchain.cjs"
     ],
     [
-      "npm",
+      "corepack",
+      "pnpm",
+      "install",
+      "--frozen-lockfile"
+    ],
+    [
+      "corepack",
+      "pnpm",
       "run",
       "check:dependencies"
     ],
     [
-      "npm",
+      "corepack",
+      "pnpm",
       "run",
       "typecheck"
     ],
     [
-      "npm",
+      "corepack",
+      "pnpm",
       "run",
       "build"
     ],
     [
-      "npm",
+      "corepack",
+      "pnpm",
       "run",
       "check:bundle"
+    ],
+    [
+      "corepack",
+      "pnpm",
+      "run",
+      "test"
     ]
   ],
   "outputs": [
@@ -54,7 +70,7 @@
   "toolchain": [
     [
       "node",
-      "--version"
+      "scripts/check-toolchain.cjs"
     ]
   ],
   "startupTimeoutSec": 180,

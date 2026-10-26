@@ -18,7 +18,7 @@ async function createServer({ autoStart = true } = {}) {
     ['/assets/favicon.png', ['assets/favicon.png', 'image/png']],
   ]);
   const manifestPath = path.join(__dirname, '../dist/manifest.json');
-  if (!fs.existsSync(manifestPath)) throw new Error('前端资源未构建，请先运行 npm ci && npm run build');
+  if (!fs.existsSync(manifestPath)) throw new Error('前端资源未构建，请先运行 corepack pnpm install --frozen-lockfile && corepack pnpm build');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   for (const file of manifest.files) {
     if (!/^(?:chunks\/)?[a-zA-Z0-9_-]+\.(?:js|css)(?:\.map)?$/.test(file)) throw new Error('非法前端资源路径');
@@ -83,7 +83,7 @@ async function createServer({ autoStart = true } = {}) {
 
 if (require.main === module) {
   for (const file of ['app.js', 'app.css', 'manifest.json']) {
-    if (!fs.existsSync(path.join(__dirname, '../dist', file))) throw new Error('前端资源未构建，请先运行 npm ci && npm run build');
+    if (!fs.existsSync(path.join(__dirname, '../dist', file))) throw new Error('前端资源未构建，请先运行 corepack pnpm install --frozen-lockfile && corepack pnpm build');
   }
   const port = Number(process.env.CONTROL_PANEL_PORT || 4310);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('CONTROL_PANEL_PORT 应为 1–65535');

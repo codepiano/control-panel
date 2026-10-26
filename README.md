@@ -1,17 +1,19 @@
 # Control Panel
 
+工具链要求：Node.js **24.15+（24.x）或 26.x**、Corepack **0.36.0+**；`packageManager` 锁定 **pnpm 12.15.0**。先用 `npm install --global corepack@0.36.0` 升级旧 Corepack，再运行 `node scripts/check-toolchain.cjs`。所有安装及脚本入口使用 `corepack pnpm`；本项目没有子项目或 CI 工作流。
+
 本机 Web 服务中控。浏览器负责展示与操作，Node.js 后端负责发现项目、保存配置和调用项目生命周期脚本；界面使用 React + Mantine，浏览器资源在本机构建并由 Node.js 提供，不依赖 CDN；运行不需要 Electron。
 
 ## 启动
 
-需要 Node.js 22 或更新版本。
+需要上述 Node.js 与 Corepack 版本；可先运行 `node scripts/check-toolchain.cjs` 检查。
 
 ```bash
-npm ci
-npm start
+corepack pnpm install --frozen-lockfile
+corepack pnpm start
 ```
 
-打开 [本机控制面板](http://127.0.0.1:4310)。后台运行前先执行 `npm run build`，然后使用：
+打开 [本机控制面板](http://127.0.0.1:4310)。后台运行前先执行 `corepack pnpm run build`，然后使用：
 
 ```bash
 ./scripts/start.sh
@@ -23,21 +25,21 @@ npm start
 
 后台启动会输出访问地址、Node 版本、配置/状态/日志路径，等待实际 HTTP 就绪后显示进程 PID、服务数量和发现问题数量；等待期间显示初始化进度，失败会打印日志尾部。
 
-`npm run build` 使用 esbuild 将 `src/ui/app.jsx` 与 Mantine 样式打包到 `dist/`，生成 ESM 分块、sourcemap、资源白名单和逐文件体积报告。`npm start` 和 `npm run dev` 会先构建；dev 使用 Node 的 watch 模式，前端修改后需要重新构建。发布准备阶段在独立产物目录中安装依赖，核对依赖版本，执行类型检查、构建与包体积回归检查；全部成功后才能切换。
+`corepack pnpm run build` 使用 esbuild 将 `src/ui/app.jsx` 与 Mantine 样式打包到 `dist/`，生成 ESM 分块、sourcemap、资源白名单和逐文件体积报告。`corepack pnpm start` 和 `corepack pnpm run dev` 会先构建；dev 使用 Node 的 watch 模式，前端修改后需要重新构建。发布准备阶段在独立产物目录中安装依赖，核对依赖版本，执行类型检查、构建与包体积回归检查；全部成功后才能切换。
 
-验证必须在独立 checkout 中进行，使用独立依赖、构建输出、缓存与临时数据。`npm test` 运行后端和页面模型测试；`npm run test:ui` 使用 Playwright 启动 `127.0.0.1:19431` 的临时后端，浏览器上下文拦截 API 并使用固定测试数据，大部分写入为模拟调用，另有临时目录中的真实服务启停与配置保存验收，不访问在线项目。首次运行先执行 `npx playwright install chromium`，或用 `PLAYWRIGHT_CHROME_PATH` 指定 Chrome 可执行文件；该方式启动独立浏览器进程和临时浏览器配置，不复用个人标签页。浏览器回归覆盖服务操作重试、批量结果、归组、长名称、桌面紧凑窗口、下拉框键盘、弹窗焦点、仓库同步历史和子服务归属。
+验证必须在独立 checkout 中进行，使用独立依赖、构建输出、缓存与临时数据。`corepack pnpm test` 运行后端和页面模型测试；`corepack pnpm run test:ui` 使用 Playwright 启动 `127.0.0.1:19431` 的临时后端，浏览器上下文拦截 API 并使用固定测试数据，大部分写入为模拟调用，另有临时目录中的真实服务启停与配置保存验收，不访问在线项目。首次运行先执行 `corepack pnpm exec playwright install chromium`，或用 `PLAYWRIGHT_CHROME_PATH` 指定 Chrome 可执行文件；该方式启动独立浏览器进程和临时浏览器配置，不复用个人标签页。浏览器回归覆盖服务操作重试、批量结果、归组、长名称、桌面紧凑窗口、下拉框键盘、弹窗焦点、仓库同步历史和子服务归属。
 
 设置、仓库同步、展示信息编辑和归组面板使用 `React.lazy` 按需加载，导航和服务列表在加载期间保持可用。设置支持 `/?view=settings`，仓库同步支持 `/?view=repositories&filter=all`，浏览器前进后退可切换面板。公共 Mantine 入口、主题、弹窗焦点适配与组件样式集中在 `src/ui/components*.jsx`、`theme.js`、`modal.jsx`、`mantine-styles.css`，业务页面不直接导入 Mantine。原图保留在 `assets/app-icon.png`，32 像素 favicon 为单独资源。
 
 在独立 checkout 中运行：
 
 ```bash
-npm run check:dependencies
-npm run typecheck
-npm run build
-npm run check:bundle
-npm test
-npm run test:ui
+corepack pnpm run check:dependencies
+corepack pnpm run typecheck
+corepack pnpm run build
+corepack pnpm run check:bundle
+corepack pnpm test
+corepack pnpm run test:ui
 ```
 
 `check:bundle` 沿构建依赖图检查完整首屏资源及每个文件的 gzip 之和，防止次级面板或浮层组件回到首屏；同时核对选用的 Mantine 样式覆盖内部依赖，并验证应用与上游 Mantine 的真实 sourcemap 定位。源码、原图与测量口径详见 [升级与优化报告](docs/react-mantine-upgrade.md)。gzip 数据为逐文件 level 9 压缩的比较指标，当前 Node 服务不发送 gzip 编码。
@@ -203,4 +205,4 @@ $project-tooling 为当前服务注册端口，获取 spec，并生成或修复�
 父服务的切换不影响独立 tunnel/子服务。代码同步只更新源码并触发后续状态检查，不自动重启运行服务。
 
 面板自身保留原有 PID 与启动器身份检查，在独立重启助手中执行版本化准备与切换。启用 release 前应按完整协议完成项目适配，
-不能给未适配项目仅填入通用 `npm run build`。全部 29 个登记服务已提供项目自有脚本，在线切换仍需单独执行。接入清单见 `docs/release-adoption.md`。
+不能给未适配项目仅填入通用 `corepack pnpm run build`。全部 29 个登记服务已提供项目自有脚本，在线切换仍需单独执行。接入清单见 `docs/release-adoption.md`。
