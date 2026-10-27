@@ -16,24 +16,54 @@ function projectPorts(project) {
 
 function parseListeners(output) {
   const listeners = [];
-  let pid, command;
+  let pid, command, file = {};
+  const finishFile = () => {
+    const match = file.address?.match(/:(\d+)$/);
+    if (!match || !pid) return;
+    const listener = { pid, command, address: file.address, port: Number(match[1]) };
+    // Linux exposes socket inodes; macOS exposes the kernel socket pointer in d.
+    // A PID, FD number or listen address alone cannot identify a shared socket.
+    if (file.inode && /^[1-9]\d*$/.test(file.inode)) listener.socketId = `${file.type}:inode:${file.device || ''}:${file.inode}`;
+    else if (/^IPv[46]$/.test(file.type) && /^0x[0-9a-f]*[1-9a-f][0-9a-f]*$/i.test(file.pointer || '')) listener.socketId = `${file.type}:socket:${file.pointer}`;
+    listeners.push(listener);
+  };
   for (const line of output.split('\n')) {
-    if (line.startsWith('p')) pid = Number(line.slice(1));
+    if (line.startsWith('p') || line.startsWith('f')) { finishFile(); file = {}; }
+    if (line.startsWith('p')) { pid = Number(line.slice(1)); command = undefined; }
     if (line.startsWith('c')) command = line.slice(1);
-    if (line.startsWith('n')) {
-      const match = line.slice(1).match(/:(\d+)$/);
-      if (match && pid) listeners.push({ pid, command, address: line.slice(1), port: Number(match[1]) });
-    }
+    if (line.startsWith('t')) file.type = line.slice(1);
+    if (line.startsWith('d')) file.pointer = line.slice(1);
+    if (line.startsWith('D')) file.device = line.slice(1);
+    if (line.startsWith('i')) file.inode = line.slice(1);
+    if (line.startsWith('n')) file.address = line.slice(1);
   }
-  return listeners.filter((item, index) => listeners.findIndex((other) => other.pid === item.pid && other.address === item.address) === index);
+  finishFile();
+  return listeners.filter((item, index) => listeners.findIndex((other) => other.pid === item.pid && other.address === item.address && other.socketId === item.socketId) === index);
 }
 
 async function readListeners() {
   return new Promise((resolve) => {
-    execFile('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpcn'], { timeout: 3000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+    execFile('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-FpcftdDin'], { timeout: 3000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
       resolve({ listeners: parseListeners(stdout || ''), error: error && !(error.code === 1 && !stdout) ? `无法读取监听进程：${error.message}` : '' });
     });
   });
+}
+
+function hasIndependentListeners(listeners) {
+  const parents = new Map(listeners.map(({ pid }) => [pid, pid]));
+  const root = (pid) => {
+    while (parents.get(pid) !== pid) pid = parents.get(pid);
+    return pid;
+  };
+  const sockets = new Map();
+  for (const listener of listeners) {
+    if (!listener.socketId) continue; // Missing identity must not hide a conflict.
+    const key = `${listener.socketId}:${listener.address}`;
+    if (sockets.has(key)) parents.set(root(listener.pid), root(sockets.get(key)));
+    else sockets.set(key, listener.pid);
+  }
+  // Multiple inherited IPv4/IPv6 sockets can belong to the same worker group.
+  return new Set([...parents.keys()].map(root)).size > 1;
 }
 
 function buildPortReport(projects, { listeners = [], error = '' } = {}) {
@@ -47,7 +77,7 @@ function buildPortReport(projects, { listeners = [], error = '' } = {}) {
     const active = listeners.filter((item) => item.port === port);
     const warnings = [];
     if (owners.length > 1) warnings.push(`重复分配：${owners.map((item) => item.name).join('、')}`);
-    if (new Set(active.map((item) => item.pid)).size > 1) warnings.push('多个进程同时监听');
+    if (hasIndependentListeners(active)) warnings.push('多个进程同时监听');
     if (owners.length && active.length && owners.every((item) => !['running', 'starting', 'stopping'].includes(item.status))) warnings.push('服务未确认运行，但端口已占用');
     return { port, owners, listeners: active, warnings };
   });
