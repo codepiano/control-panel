@@ -210,6 +210,8 @@ function App() {
     [organization, setOrganization] = useState(null);
   const refreshing = useRef(/** @type {Promise<void> | null} */ (null)),
     repoReading = useRef(false),
+    repoActionPending = useRef(false),
+    repoReadEpoch = useRef(0),
     locks = useRef(new Set()),
     restarting = useRef(false);
   const refresh = useCallback(async () => {
@@ -235,10 +237,12 @@ function App() {
     finally { if (refreshing.current === pending) refreshing.current = null; }
   }, []);
   const readRepos = useCallback(async () => {
-    if (repoReading.current || restarting.current) return;
+    if (repoReading.current || repoActionPending.current || restarting.current) return;
     repoReading.current = true;
+    const epoch = repoReadEpoch.current;
     try {
-      setRepos(await api.getRepositorySync());
+      const payload = await api.getRepositorySync();
+      if (epoch === repoReadEpoch.current) setRepos(payload);
     } catch (error) {
       setMessage(`仓库状态读取失败：${error.message}`);
     } finally {
@@ -288,16 +292,28 @@ function App() {
       setBusy(new Set(locks.current));
     }
   };
-  const repoAction = async (kind, keys) => {
-    if (repos.busy) return;
-    await run("repositories", async () =>
-      setRepos(
-        kind === "check"
-          ? await api.checkRepositories(keys)
-          : await api.syncRepositories(kind, keys),
-      ),
-    );
-    await readRepos();
+  const repoAction = async (kind, keys, current = repos) => {
+    if (current.busy || repoActionPending.current) {
+      setMessage("已有仓库操作正在进行，请等待本次操作完成。");
+      return;
+    }
+    repoActionPending.current = true;
+    repoReadEpoch.current++;
+    setRepos((old) => ({ ...old, busy: true, operation: kind,
+      activeRepositoryKeys: keys || old.repositories.map((r) => r.key),
+      currentRepository: "", progress: null }));
+    try {
+      await run("repositories", async () =>
+        setRepos(
+          kind === "check"
+            ? await api.checkRepositories(keys)
+            : await api.syncRepositories(kind, keys),
+        ),
+      );
+    } finally {
+      repoActionPending.current = false;
+      await readRepos();
+    }
   };
   const checkRepo = (project) =>
     run(`repo:${project.key}`, async () => {
@@ -306,7 +322,7 @@ function App() {
       const repo = repositoryForProject(project, payload.repositories);
       if (!repo) throw new Error(`${project.name} 没有可识别的 Git 仓库`);
       setRepoModal({ view: "project", key: repo.key });
-      if (!payload.busy) setRepos(await api.checkRepositories([repo.key]));
+      await repoAction("check", [repo.key], payload);
     });
   const projectAction = (project, action) =>
     run(project.key, async () => {

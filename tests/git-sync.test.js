@@ -37,6 +37,89 @@ async function waitUntil(predicate) {
   }
 }
 
+function failingFetch(f, failures, message) {
+  const attempts = path.join(f.root, 'fetch-attempts');
+  const script = path.join(f.root, 'upload-pack.sh');
+  fs.writeFileSync(script, `#!/bin/sh\nprintf x >> '${attempts}'\ncount=$(wc -c < '${attempts}')\nif [ "$count" -le ${failures} ]; then\n  printf '%s\\n' '${message}' >&2\n  exit 128\nfi\nexec git-upload-pack "$@"\n`, { mode: 0o755 });
+  git(f.one, 'config', 'remote.origin.uploadpack', script);
+  return () => fs.existsSync(attempts) ? fs.readFileSync(attempts, 'utf8').length : 0;
+}
+
+test('temporary fetch failures stay in progress until a retry succeeds', async () => {
+  const f = fixture('transient-recovery');
+  const count = failingFetch(f, 2, 'Connection closed by 198.18.0.86 port 22');
+  const service = manager(f);
+  service.request('check'); const finished = service.wait();
+  await waitUntil(() => count() === 2);
+  const pending = service.snapshot();
+  assert.equal(pending.busy, true);
+  assert.deepEqual(pending.results, []);
+  assert.deepEqual(pending.activeRepositoryKeys, [pending.repositories[0].key]);
+  assert.equal(pending.repositories[0].error, undefined);
+  const state = await finished;
+  assert.equal(count(), 3);
+  assert.equal(state.repositories[0].status, 'synced');
+  assert.equal(state.repositories[0].error, '');
+  assert.equal(state.results[0].outcome, 'checked');
+  assert.deepEqual(state.activeRepositoryKeys, []);
+});
+
+test('fetch retries are bounded and a fresh manual check clears exhausted failures', async () => {
+  const f = fixture('transient-exhausted');
+  const count = failingFetch(f, 3, 'Failed to connect to example.invalid port 443: Connection timed out');
+  const service = manager(f);
+  let state = await run(service, 'check');
+  assert.equal(count(), 3);
+  assert.equal(state.results[0].outcome, 'failed');
+  assert.match(state.repositories[0].error, /Connection timed out/);
+  assert.match(state.repositories[0].error, /已尝试 3 次/);
+  service.request('check', [state.repositories[0].key]);
+  assert.deepEqual(service.snapshot().activeRepositoryKeys, [state.repositories[0].key]);
+  assert.deepEqual(service.snapshot().results, []);
+  state = await service.wait();
+  assert.equal(count(), 4);
+  assert.equal(state.results[0].outcome, 'checked');
+  assert.equal(state.repositories[0].status, 'synced');
+  assert.equal(state.repositories[0].error, '');
+});
+
+test('authentication, certificate and repository failures are not retried', async () => {
+  for (const [index, message] of [
+    'Permission denied (publickey). Connection closed by peer',
+    'fatal: Authentication failed',
+    'fatal: repository not found',
+    'SSL certificate problem: unable to get local issuer certificate',
+    'Host key verification failed.',
+  ].entries()) {
+    const f = fixture(`permanent-fetch-${index}`);
+    const count = failingFetch(f, 5, message);
+    const state = await run(manager(f), 'check');
+    assert.equal(count(), 1);
+    assert.equal(state.results[0].outcome, 'failed');
+  }
+});
+
+test('stopping during retry backoff prevents another fetch', async () => {
+  const f = fixture('stop-retry');
+  const count = failingFetch(f, 5, 'Connection reset by peer');
+  const service = manager(f);
+  service.request('check'); const finished = service.wait();
+  await waitUntil(() => count() === 1);
+  service.stop();
+  await finished;
+  assert.equal(count(), 1);
+});
+
+test('a push failure is never replayed even when it resembles a connection failure', async () => {
+  const f = fixture('push-not-replayed');
+  commit(f.one, 'local.txt', 'local-change');
+  const attempts = path.join(f.root, 'push-attempts');
+  fs.writeFileSync(path.join(f.remote, 'hooks/pre-receive'), `#!/bin/sh\nprintf x >> '${attempts}'\necho 'Connection reset by peer' >&2\nexit 1\n`, { mode: 0o755 });
+  const state = await run(manager(f), 'push');
+  assert.equal(state.results[0].outcome, 'failed');
+  assert.equal(fs.readFileSync(attempts, 'utf8'), 'x');
+});
+
 test('checks run four at a time, publish partial results, isolate failure and retain repository order', async () => {
   const fixtures = Array.from({ length: 5 }, (_, index) => fixture(`concurrent-${index}`));
   const gates = fixtures.map((f, index) => {

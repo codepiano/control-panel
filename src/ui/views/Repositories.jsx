@@ -31,6 +31,11 @@ export default function Repositories({
 }) {
   const repositories = payload.repositories || [],
     locked = busy || payload.busy;
+  const checkingKeys = new Set(
+    payload.busy && payload.operation === "check"
+      ? payload.activeRepositoryKeys || []
+      : [],
+  );
   const pending = repositories.filter(needsAttention),
     pulls = repositories.filter((r) => r.behind && !r.ahead),
     pushes = repositories.filter((r) => r.ahead && !r.behind);
@@ -149,8 +154,8 @@ export default function Repositories({
               : `${repositories.length} 个仓库 · ${pending.length} 个需要处理 · 最近完成：${timestamp(payload.lastFinishedAt)}`)}
         </Text>
         <Text size="xs" c="dimmed">
-          下次计划：{timestamp(payload.nextCheckAt)}（本机时区） · 检查失败 15
-          分钟后重试 · 同一仓库只检查一次
+          下次计划：{timestamp(payload.nextCheckAt)}（本机时区） · 临时连接失败最多尝试 3 次，间隔 1、2 秒；仍失败时 15
+          分钟后补查
         </Text>
         <Group gap="xs" aria-label="仓库筛选">
           {tabs.map((t) => (
@@ -195,13 +200,13 @@ export default function Repositories({
                     {r.directory}
                   </Text>
                   <Badge
-                    color={needsAttention(r) ? "orange" : "teal"}
+                    color={checkingKeys.has(r.key) ? "blue" : needsAttention(r) ? "orange" : "teal"}
                     variant="light"
                     mt="sm"
                   >
-                    {repoText(r)}
+                    {checkingKeys.has(r.key) ? "正在重新检查…" : repoText(r)}
                   </Badge>
-                  {(needsAttention(r) || r.status === "pinned") && (
+                  {!checkingKeys.has(r.key) && (needsAttention(r) || r.status === "pinned") && (
                     <Text size="xs" c="orange.9" mt="xs">
                       {repoGuidance(r)}
                     </Text>
@@ -222,9 +227,9 @@ export default function Repositories({
                     </Text>
                   )}
                   <Text size="xs" c="dimmed" mt="xs">
-                    最后检查：{timestamp(r.checkedAt)}
+                    {checkingKeys.has(r.key) ? "上次检查" : "最后检查"}：{timestamp(r.checkedAt)}
                   </Text>
-                  {r.error && (
+                  {r.error && !checkingKeys.has(r.key) && (
                     <Text size="xs" c="red" mt="xs">
                       {r.error}
                     </Text>
@@ -240,6 +245,7 @@ export default function Repositories({
                       key={kind}
                       size="xs"
                       variant="default"
+                      loading={kind === "check" && checkingKeys.has(r.key)}
                       disabled={
                         locked || (kind !== "check" && !canSync(r, kind))
                       }

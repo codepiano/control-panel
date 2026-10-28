@@ -7,7 +7,29 @@ function git(directory, args) {
   return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args], {
     timeout: 45000, maxBuffer: 2 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes -o ConnectTimeout=10' },
-  }, (error, stdout, stderr) => error ? reject(new Error(gitFailure(args[0], error, stdout, stderr))) : resolve(stdout.trim())));
+  }, (error, stdout, stderr) => {
+    if (!error) return resolve(stdout.trim());
+    const failure = new Error(gitFailure(args[0], error, stdout, stderr));
+    const output = `${stderr || ''}\n${stdout || ''}`;
+    const permanent = /permission denied|authentication failed|repository not found|host key verification failed|certificate (?:verification failed|problem)|unable to get local issuer certificate|cannot lock ref|couldn't find remote ref/i.test(output);
+    failure.retryable = !permanent && (error.killed === true || /connection (?:closed|reset|refused)|(?:connection|operation) timed out|could not resolve (?:host|hostname)|temporary failure in name resolution|failed to connect|couldn't connect|network is unreachable|no route to host|remote end hung up|early EOF|SSL connect error|TLS connection was non-properly terminated|(?:HTTP[^\n]*|returned error:)\s(?:408|429|500|502|503|504)\b/i.test(output));
+    reject(failure);
+  }));
+}
+
+async function fetchWithRetry(directory, remote, shouldContinue) {
+  const delays = [1000, 2000];
+  for (let attempt = 0; ; attempt++) {
+    try { return await git(directory, ['fetch', '--prune', '--no-tags', remote]); }
+    catch (error) {
+      if (!error.retryable || attempt === delays.length || !shouldContinue()) {
+        if (attempt) error.message += `（已尝试 ${attempt + 1} 次）`;
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+      if (!shouldContinue()) throw error;
+    }
+  }
 }
 function gitFailure(command, error, stdout, stderr) {
   const output = [stderr, stdout].filter((value) => value?.trim()).join('\n').trim() || error.message;
@@ -51,7 +73,7 @@ function createGitSync({ statePath, getProjects, now = () => new Date(), checkCo
   if (!Number.isInteger(checkConcurrency) || checkConcurrency < 1 || checkConcurrency > 16) throw new Error('检查并发数应为 1–16');
   let state;
   try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { state = {}; }
-  state = { repositories: [], results: [], lastSync: null, lastAttemptAt: null, completedSlot: null, ...state, busy: false, currentRepository: '', progress: null };
+  state = { repositories: [], results: [], lastSync: null, lastAttemptAt: null, completedSlot: null, ...state, busy: false, currentRepository: '', activeRepositoryKeys: [], progress: null };
   let timer = null, job = null, discoveryJob = null, stopped = false, discoverySignature = '';
   const save = () => {
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -89,7 +111,7 @@ function createGitSync({ statePath, getProjects, now = () => new Date(), checkCo
     try {
       inspected = await inspectRepository(repo);
       if (inspected.remote && inspected.remote !== '.' && !inspected.remote.startsWith('-')) {
-        await git(repo.directory, ['fetch', '--prune', '--no-tags', inspected.remote]);
+        await fetchWithRetry(repo.directory, inspected.remote, () => !stopped);
         inspected = await inspectRepository(repo);
       }
       return { ...inspected, error: '', checkedAt: now().toISOString() };
@@ -107,7 +129,7 @@ function createGitSync({ statePath, getProjects, now = () => new Date(), checkCo
     state.progress = { completed: 0, total: selected.length };
     const slot = dailySlot(now());
     const active = new Map(), results = new Map();
-    const updateActive = () => { state.currentRepository = [...active.values()].join('、'); };
+    const updateActive = () => { state.currentRepository = [...active.values()].join('、'); state.activeRepositoryKeys = [...active.keys()]; };
     async function processOne(repo) {
       active.set(repo.key, repo.name); updateActive();
       try {
@@ -166,8 +188,8 @@ function createGitSync({ statePath, getProjects, now = () => new Date(), checkCo
   }
   function request(kind = 'check', keys, scheduled = false) {
     if (job) return snapshot();
-    state.busy = true; state.operation = kind; state.currentRepository = ''; state.progress = null;
-    job = execute(kind, keys, scheduled).catch((error) => { state.error = error.message; }).finally(() => { state.busy = false; state.currentRepository = ''; job = null; save(); });
+    state.busy = true; state.operation = kind; state.currentRepository = ''; state.activeRepositoryKeys = kind === 'check' ? (keys || state.repositories.map((repo) => repo.key)) : []; state.progress = null; state.results = [];
+    job = execute(kind, keys, scheduled).catch((error) => { state.error = error.message; }).finally(() => { state.busy = false; state.currentRepository = ''; state.activeRepositoryKeys = []; job = null; save(); });
     state.error = '';
     return snapshot();
   }

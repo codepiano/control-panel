@@ -230,6 +230,54 @@ test("service actions remain retryable after unchanged snapshots and errors", as
     ["repo"],
   ]);
 });
+test("manual recheck shows progress, ignores an older poll and replaces the previous failure", async ({ page }) => {
+  await setup(page, "", "/?view=repositories&filter=project&repo=repo");
+  const checked = "2026-10-29T01:00:00Z";
+  const failed = { ...repositories, busy: false, repositories: [{
+    ...repositories.repositories[0], status: "error", error: "Connection closed by peer", checkedAt: checked,
+  }] };
+  let response = failed;
+  let holdNextRead = false, releaseOldRead, releaseCheck;
+  await page.route("**/api/get-repository-sync", async (route) => {
+    if (holdNextRead) {
+      holdNextRead = false;
+      await new Promise(resolve => { releaseOldRead = async () => {
+        await route.fulfill({ json: { data: failed } }); resolve();
+      }; });
+    } else await route.fulfill({ json: { data: response } });
+  });
+  await page.route("**/api/check-repositories", async (route) => {
+    expect(route.request().postDataJSON().args).toEqual([["repo"]]);
+    await new Promise(resolve => { releaseCheck = async () => {
+      response = { ...failed, busy: true, operation: "check", activeRepositoryKeys: ["repo"], currentRepository: "研究工作区" };
+      await route.fulfill({ json: { data: response } }); resolve();
+    }; });
+  });
+  const wake = () => page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await wake();
+  const row = page.locator('[data-repo-key="repo"]');
+  await expect(row).toContainText("Connection closed by peer");
+  holdNextRead = true;
+  await wake();
+  await expect.poll(() => Boolean(releaseOldRead)).toBe(true);
+  await row.getByRole("button", { name: "检查", exact: true }).click();
+  await expect.poll(() => Boolean(releaseCheck)).toBe(true);
+  await expect(row).toContainText("正在重新检查…");
+  await expect(row.getByRole("button", { name: "检查", exact: true })).toBeDisabled();
+  await releaseOldRead();
+  await expect(row).toContainText("正在重新检查…");
+  await expect(row).not.toContainText("Connection closed by peer");
+  await page.screenshot({ path: "/tmp/control-panel-git-rechecking.png", animations: "disabled" });
+  await releaseCheck();
+  await expect(row).toContainText("正在重新检查…");
+  response = { ...failed, repositories: [{ ...failed.repositories[0], status: "synced", error: "", ahead: 0, behind: 0, checkedAt: "2026-10-29T01:01:00Z" }] };
+  await wake();
+  await expect(row).toContainText("已同步");
+  await expect(row).not.toContainText("Connection closed by peer");
+  await expect(row.getByRole("button", { name: "检查", exact: true })).toBeEnabled();
+  await page.screenshot({ path: "/tmp/control-panel-git-recovered.png", animations: "disabled" });
+});
+
 test("batch organization preserves unrelated preferences and batch results remain per item", async ({
   page,
 }) => {
