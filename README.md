@@ -119,7 +119,9 @@ corepack pnpm run test:ui
 | `CONTROL_PANEL_DATA` | 自定义状态和图标目录 |
 | `CONTROL_PANEL_NODE` | 后台启动和登录启动使用的 Node 绝对路径 |
 
-macOS 登录启动可在设置中切换，或执行 `./scripts/install-login-item.sh` / `./scripts/uninstall-login-item.sh`。登录项只启动后端，不自动打开浏览器；移动源码目录或更换 Node 路径后应重新启用登录项。
+`scripts/start.sh`、`stop.sh`、`status.sh` 和 `restart.sh` 均通过版本化生命周期管理发布产物。源码目录无需保留 `dist`；需要构建时会先在独立发布目录完成构建与验证，再启动服务。
+
+macOS 登录启动可在设置中切换，或执行 `./scripts/install-login-item.sh` / `./scripts/uninstall-login-item.sh`。登录项通过上述启动入口启动后端，不自动打开浏览器；移动源码目录或更换 Node 路径后应重新启用登录项。
 
 ## 状态刷新
 

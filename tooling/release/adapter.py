@@ -375,7 +375,12 @@ def prepare():
 
 def legacy(action, directory=ROOT, check=True):
     args = CONFIG['legacy'][action]
-    return run(args, cwd=directory, check=check, timeout=CONFIG.get('startupTimeoutSec', 180))
+    env = runtime_env()
+    if CONFIG.get('panel'):
+        # Only this exact runtime invocation may bypass the public release entry.
+        # The shell consumes the marker before starting the long-lived backend.
+        env['CONTROL_PANEL_RUNTIME_ROOT'] = str(directory)
+    return run(args, cwd=directory, env=env, check=check, timeout=CONFIG.get('startupTimeoutSec', 180))
 
 
 def attach_runtime(directory):

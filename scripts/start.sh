@@ -2,6 +2,10 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${CONTROL_PANEL_RUNTIME_ROOT:-}" != "$PROJECT_ROOT" ]]; then
+  exec "$PROJECT_ROOT/scripts/release-start.sh" "$@"
+fi
+unset CONTROL_PANEL_RUNTIME_ROOT
 SCRIPT_DIR="$PROJECT_ROOT/scripts"
 STATE_DIR="$PROJECT_ROOT/.control-panel"
 PID_FILE="$STATE_DIR/control-panel.pid"
