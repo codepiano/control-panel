@@ -41,7 +41,9 @@ function command(script, cwd, { timeoutMs = 8000, env = {} } = {}) {
     const kill = (error) => { failure ||= error; try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
     const timer = setTimeout(() => kill(new Error('版本命令超时')), timeoutMs);
     child.stdout.on('data', (data) => { stdout += data; if (Buffer.byteLength(stdout) > 262144) kill(new Error('版本命令输出过大')); });
-    child.stderr.on('data', (data) => { stderr += data; if (Buffer.byteLength(stderr) > 262144) kill(new Error('版本命令输出过大')); });
+    // Build tools write progress and warnings to stderr. Retain a bounded tail
+    // for failure diagnostics without aborting an otherwise valid release.
+    child.stderr.on('data', (data) => { stderr = Buffer.concat([Buffer.from(stderr), data]).subarray(-262144).toString('utf8'); });
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
     child.once('close', (code) => {
       clearTimeout(timer);

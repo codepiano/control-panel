@@ -52,3 +52,10 @@ test('real command passes revision and artifact literally and rejects invalid JS
   await assert.rejects(command('exit 2', process.cwd()), /失败/);
   await assert.rejects(command('sleep 10', process.cwd(), {timeoutMs:100}), /超时/);
 });
+
+test('release commands tolerate large build logs but retain failure details and bound JSON output', async () => {
+  const noisy = `${JSON.stringify(process.execPath)} -e 'process.stderr.write("warning\\n".repeat(50000));`;
+  assert.deepEqual(await command(`${noisy} console.log(JSON.stringify({builtRevision:"target"}))'`, process.cwd()), { builtRevision: 'target' });
+  await assert.rejects(command(`${noisy} process.stderr.write("BUILD_FAILED_MARKER"); process.exitCode=2'`, process.cwd()), /BUILD_FAILED_MARKER/);
+  await assert.rejects(command(`${JSON.stringify(process.execPath)} -e 'process.stdout.write("x".repeat(300000))'`, process.cwd()), /输出过大/);
+});
