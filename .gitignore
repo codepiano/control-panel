@@ -8,3 +8,7 @@ build/
 
 playwright-report/
 test-results/
+
+# Python release tooling cache
+__pycache__/
+*.py[cod]
