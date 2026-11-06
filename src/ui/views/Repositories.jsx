@@ -19,6 +19,7 @@ const {
   repositoryStatusText: repoText,
   repositoryActionGuidance: repoGuidance,
   repositoryResults,
+  repositoryGroup,
 } = model;
 const api = window.controlPanel;
 import { Empty } from "../shared.jsx";
@@ -43,8 +44,10 @@ export default function Repositories({
     readyPushes = pushes.filter((r) => canSync(r, "push")).length;
   const focused = repositories.find((r) => r.key === state?.key),
     view = state?.view || "attention";
+  const scope = repositoryGroup(repositories, state?.key),
+    scopeKeys = scope.map((repo) => repo.key);
   const filterResults = (results) =>
-    (results || []).filter((r) => view !== "project" || r.key === state?.key);
+    (results || []).filter((r) => view !== "project" || scopeKeys.includes(r.key));
   const recent = filterResults(payload.lastSync?.results),
     count = (outcome) => recent.filter((r) => r.outcome === outcome).length;
   const byService = new Map(
@@ -62,7 +65,7 @@ export default function Repositories({
   );
   const roots =
     view === "project"
-      ? repositories.filter((r) => r.key === state?.key)
+      ? scope
       : view === "attention"
         ? pending
         : view === "pull"
@@ -106,6 +109,11 @@ export default function Repositories({
           每天凌晨 03:00 检查，错过后在唤醒或启动时补查。推送与拉取由你执行。
         </Text>
         <Group gap="xs">
+          {view === "project" && focused && (
+            <Button disabled={locked} onClick={() => action("check", scopeKeys)}>
+              检查当前项目{scope.length > 1 ? `（${scope.length} 个仓库）` : ""}
+            </Button>
+          )}
           {[
             [
               "sync",
@@ -171,6 +179,11 @@ export default function Repositories({
             </Button>
           ))}
         </Group>
+        {view === "project" && scope.length > 1 && (
+          <Text size="sm" c="dimmed">
+            当前项目包含 {scope.length} 个仓库，检查时会一并检查已登记的各级子仓库；结果逐项显示。
+          </Text>
+        )}
         <Stack gap="sm">
           {rows.map(({ repo: r, depth }) => (
             <Paper
@@ -249,7 +262,12 @@ export default function Repositories({
                       disabled={
                         locked || (kind !== "check" && !canSync(r, kind))
                       }
-                      onClick={() => action(kind, [r.key])}
+                      onClick={() => action(
+                        kind,
+                        kind === "check"
+                          ? repositoryGroup(repositories, r.key).map((repo) => repo.key)
+                          : [r.key],
+                      )}
                     >
                       {label}
                     </Button>
@@ -266,7 +284,7 @@ export default function Repositories({
             </Empty>
           )}
         </Stack>
-        {repositoryResults(payload, view === "project" ? state?.key : null).map(
+        {repositoryResults(payload, view === "project" ? scopeKeys : null).map(
           (group) => (
             <Box key={group.title}>
               <Text fw={650} size="sm" mb="xs">

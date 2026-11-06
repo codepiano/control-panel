@@ -459,3 +459,27 @@ test('detached submodules matching the parent are pinned; changed versions and s
   git(f.one, 'checkout', '--detach');
   assert.equal((await inspectRepository({ directory: f.one })).status, 'detached');
 });
+
+test('a project group check fetches every selected child and preserves unrelated snapshots and working trees', async () => {
+  const first = fixture('group-parent'), child = fixture('group-child'), other = fixture('group-other');
+  const service = manager(first, { getProjects: () => [
+    { key: 'parent', projectDir: first.one },
+    { key: 'child', projectDir: child.one, ancestors: [{ key: 'parent' }] },
+    { key: 'other', projectDir: other.one },
+  ] });
+  const before = await run(service, 'check');
+  for (const f of [first, child, other]) { commit(f.two, 'new.txt', 'remote-new'); git(f.two, 'push'); }
+  fs.writeFileSync(path.join(child.one, 'file.txt'), 'uncommitted');
+  const { repositoryGroup } = require('../src/ui/model.cjs');
+  const keys = repositoryGroup(before.repositories, before.repositories[0].key).map(r => r.key);
+  const state = await run(service, 'check', keys);
+  assert.equal(keys.length, 2);
+  assert.deepEqual(state.results.map(r => r.key), keys);
+  assert.equal(state.repositories[0].behind, 1);
+  assert.equal(state.repositories[1].behind, 1);
+  assert.equal(state.repositories[1].dirty, 1);
+  assert.deepEqual(state.repositories[2], before.repositories[2]);
+  assert.equal(git(other.one, 'rev-parse', 'origin/main'), git(other.one, 'rev-parse', 'HEAD'));
+  for (const f of [first, child]) assert.equal(git(f.one, 'rev-parse', 'HEAD'), git(f.one, 'rev-parse', 'origin/main~1'));
+  assert.equal(fs.readFileSync(path.join(child.one, 'file.txt'), 'utf8'), 'uncommitted');
+});

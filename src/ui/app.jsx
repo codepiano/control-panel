@@ -65,6 +65,7 @@ const {
   repositoryNeedsAttention: needsAttention,
   repositoryStatusText: repoText,
   repositoryForProject,
+  repositoryGroup,
 } = model;
 import { theme } from "./theme.js";
 import { useViewRoute } from "./view-route.js";
@@ -322,7 +323,11 @@ function App() {
       const repo = repositoryForProject(project, payload.repositories);
       if (!repo) throw new Error(`${project.name} 没有可识别的 Git 仓库`);
       setRepoModal({ view: "project", key: repo.key });
-      await repoAction("check", [repo.key], payload);
+      await repoAction(
+        "check",
+        repositoryGroup(payload.repositories, repo.key).map((r) => r.key),
+        payload,
+      );
     });
   const projectAction = (project, action) =>
     run(project.key, async () => {

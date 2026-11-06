@@ -669,3 +669,43 @@ test("action completion refreshes after an older poll without leaving a stale tr
   await expect(child).not.toContainText("启动中");
   expect(reads).toBeGreaterThan(1);
 });
+
+test("project checks include all child repositories and retain group scope after polling", async ({ page }) => {
+  await setup(page);
+  const group = { ...repositories, repositories: [
+    repositories.repositories[0],
+    { ...repositories.repositories[0], key: "child-repo", name: longName, directory: "/tmp/research/api", services: [{ key: "api", ancestors: [{ key: "parent" }] }] },
+    { ...repositories.repositories[0], key: "deep-repo", name: "深层子仓库", directory: "/tmp/research/api/lib", services: [] },
+    repositories.repositories[1],
+  ], results: [
+    { key: "repo", name: "研究工作区", outcome: "checked", detail: "父仓库已检查" },
+    { key: "child-repo", name: longName, outcome: "failed", detail: "子仓库连接失败" },
+    { key: "deep-repo", name: "深层子仓库", outcome: "checked", detail: "深层已检查" },
+    { key: "pinned", name: "其他仓库", outcome: "checked", detail: "不应显示" },
+  ] };
+  await page.route("**/api/get-repository-sync", route => route.fulfill({ json: { data: group } }));
+  const requests = [];
+  await page.route("**/api/check-repositories", route => {
+    requests.push(route.request().postDataJSON().args);
+    return route.fulfill({ json: { data: group } });
+  });
+  await page.locator('[data-project-key="parent"]').getByRole("button", { name: "更多操作", exact: false }).click();
+  await page.getByRole("menuitem", { name: "检查代码更新" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator('[data-repo-key]')).toHaveCount(3);
+  expect(requests[0]).toEqual([["repo", "child-repo", "deep-repo"]]);
+  await expect(dialog).toContainText("子仓库连接失败");
+  await expect(dialog).not.toContainText("不应显示");
+  const check = dialog.getByRole("button", { name: "检查当前项目（3 个仓库）", exact: true });
+  await check.focus();
+  await expect(check).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toEqual(requests[0]);
+  await dialog.locator('[data-repo-key="child-repo"]').getByRole("button", { name: "检查", exact: true }).click();
+  await expect.poll(() => requests.length).toBe(3);
+  expect(requests[2]).toEqual([["child-repo", "deep-repo"]]);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(dialog.locator('[data-repo-key]')).toHaveCount(3);
+  await page.screenshot({ path: "/tmp/control-panel-repository-group.png", animations: "disabled" });
+});

@@ -196,9 +196,37 @@ function repositoryForProject(project, repositories, ownOnly = false) {
     return null;
   return repo;
 }
+// A project repository and its registered descendants form one check scope.
+function repositoryGroup(repositories, rootKey) {
+  const keys = new Set([rootKey]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const selected = repositories.filter((repo) => keys.has(repo.key));
+    const services = new Set(
+      selected.flatMap((repo) => repo.services.map((service) => service.key)),
+    );
+    for (const repo of repositories) {
+      if (keys.has(repo.key)) continue;
+      const descendant =
+        repo.services.some((service) =>
+          service.ancestors?.some((ancestor) => services.has(ancestor.key)),
+        ) || selected.some((parent) =>
+          parent.directory && repo.directory?.startsWith(`${parent.directory.replace(/\/$/, "")}/`),
+        );
+      if (descendant) {
+        keys.add(repo.key);
+        changed = true;
+      }
+    }
+  }
+  return repositories.filter((repo) => keys.has(repo.key));
+}
 function repositoryResults(payload, focusKey = null) {
   const filter = (results) =>
-    (results || []).filter((result) => !focusKey || result.key === focusKey);
+    (results || []).filter((result) =>
+      !focusKey || (Array.isArray(focusKey) ? focusKey.includes(result.key) : result.key === focusKey),
+    );
   const recent = filter(payload.lastSync?.results);
   return [
     ...(recent.length ? [{ title: "最近一次同步结果", results: recent }] : []),
@@ -228,5 +256,6 @@ module.exports = {
   repositoryActionGuidance,
   repositoryCanSync,
   repositoryForProject,
+  repositoryGroup,
   repositoryResults,
 };

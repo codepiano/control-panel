@@ -2,6 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   repositoryForProject,
+  repositoryGroup,
   repositoryResults,
   repositoryNeedsAttention,
   repositoryCanSync,
@@ -98,4 +99,19 @@ test("pinned submodules need no intervention unless dirty; unsafe repositories c
     { error: "fetch failed" },
   ])
     assert.equal(repositoryCanSync({ ...repo, ...bad }, "pull"), false);
+});
+
+test("repository check scopes include nested repositories and service descendants only", () => {
+  const repos = [
+    { key: "root", directory: "/work/app", services: [{ key: "app" }, { key: "worker" }] },
+    { key: "child", directory: "/elsewhere/api", services: [{ key: "api", ancestors: [{ key: "app" }] }] },
+    { key: "deep", directory: "/elsewhere/api/nested", services: [] },
+    { key: "nested", directory: "/work/app/lib", services: [] },
+    { key: "sibling", directory: "/work/app-other", services: [{ key: "other" }] },
+  ];
+  assert.deepEqual(repositoryGroup(repos, "root").map(r => r.key), ["root", "child", "deep", "nested"]);
+  assert.deepEqual(repositoryGroup(repos, "child").map(r => r.key), ["child", "deep"]);
+  assert.deepEqual(repositoryGroup(repos, "missing"), []);
+  const payload = { operation: "check", results: repos.map(r => ({ key: r.key })) };
+  assert.deepEqual(repositoryResults(payload, ["root", "child"])[0].results.map(r => r.key), ["root", "child"]);
 });
