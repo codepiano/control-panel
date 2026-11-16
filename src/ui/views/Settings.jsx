@@ -82,7 +82,7 @@ export default function Settings({ opened, close, data, run: perform, busy }) {
               onClick={async () => {
                 if (
                   await run("roots", () =>
-                    api.setProjectRoots([...new Set([...roots, root.trim()])]),
+                    api.setProjectRoots([...new Set([...roots, root.trim()])], root.trim()),
                   )
                 )
                   setRoot("");

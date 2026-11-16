@@ -1,4 +1,7 @@
 const { test, expect } = require("@playwright/test");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const longName =
   "Agent Docs 文档协作与知识管理工作台（这是一个用于验证长服务名称和箭头留白的完整标题）";
 const projects = [
@@ -162,6 +165,49 @@ async function setup(page, fail = "", url = "/") {
   await expect(page.locator("h1")).toHaveText("全部服务");
   await expect(page.locator('[data-project-key="child"]')).toBeVisible();
 }
+
+test("project removal defaults to keeping files and supports explicit directory deletion", async ({ page, request }) => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "panel-removal-ui-"));
+  const folders = ["Keep files", "Delete files"].map((name) => {
+    const directory = path.join(temporary, name);
+    fs.mkdirSync(directory);
+    fs.writeFileSync(path.join(directory, "control-panel.json"), JSON.stringify({ name }));
+    return directory;
+  });
+  const { token } = await (await request.get("/api/session")).json();
+  const setRoots = (roots) => request.post("/api/set-project-roots", {
+    headers: { "X-Control-Panel-Token": token },
+    data: { args: [roots] },
+  });
+  try {
+    expect((await setRoots(folders)).ok()).toBe(true);
+    await page.goto("/");
+    const openRemoval = async (name) => {
+      await page.getByRole("button", { name: `${name} 更多操作` }).click();
+      await page.getByRole("menuitem", { name: "移除项目" }).click();
+      return page.getByRole("dialog", { name: "移除项目" });
+    };
+    let dialog = await openRemoval("Keep files");
+    await expect(dialog.getByRole("checkbox")).not.toBeChecked();
+    await dialog.getByRole("button", { name: "取消" }).click();
+    await expect(page.getByRole("button", { name: "Keep files 更多操作" })).toBeVisible();
+    dialog = await openRemoval("Keep files");
+    await dialog.getByRole("button", { name: "确认移除" }).click();
+    await expect(page.getByRole("button", { name: "Keep files 更多操作" })).toHaveCount(0);
+    expect(fs.existsSync(folders[0])).toBe(true);
+
+    dialog = await openRemoval("Delete files");
+    await expect(dialog.getByRole("checkbox")).not.toBeChecked();
+    await dialog.getByRole("checkbox", { name: "同时永久删除项目目录" }).check();
+    await dialog.getByRole("button", { name: "移除并删除目录" }).click();
+    await expect(page.getByRole("button", { name: "Delete files 更多操作" })).toHaveCount(0);
+    expect(fs.existsSync(folders[1])).toBe(false);
+  } finally {
+    await setRoots([]);
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test("production assets load under CSP; filters, long labels and keyboard navigation work", async ({
   page,
 }) => {

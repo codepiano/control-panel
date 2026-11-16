@@ -51,6 +51,7 @@ import {
   IconServer,
   IconSettings,
   IconStar,
+  IconTrash,
 } from "@tabler/icons-react";
 import { setNonce } from "get-nonce";
 import model from "./model.cjs";
@@ -74,6 +75,7 @@ const Settings = lazy(() => import("./views/Settings.jsx"));
 const Editor = lazy(() => import("./views/Editor.jsx"));
 const Organization = lazy(() => import("./views/Organization.jsx"));
 const Repositories = lazy(() => import("./views/Repositories.jsx"));
+const RemoveProject = lazy(() => import("./views/RemoveProject.jsx"));
 const api = window.controlPanel;
 const { buildProjectTree, matchingProjects } = window.projectTree;
 const colorFor = (status) =>
@@ -209,6 +211,7 @@ function App() {
     [busy, setBusy] = useState(new Set());
   const [editor, setEditor] = useState(null),
     [organization, setOrganization] = useState(null);
+  const [removal, setRemoval] = useState(null);
   const refreshing = useRef(/** @type {Promise<void> | null} */ (null)),
     repoReading = useRef(false),
     repoActionPending = useRef(false),
@@ -349,6 +352,19 @@ function App() {
       setMessage(`${title}：启动结果`);
       setResults(await api.startProjects(keys));
     });
+  const removeProject = (deleteDirectory, onError) =>
+    run(removal.key, async () => {
+      try {
+        const { warning } = await api.removeProject(removal.key, deleteDirectory);
+        setRemoval(null);
+        setScope((current) => current === `project:${removal.key}` ? "all" : current);
+        setResults([]);
+        setMessage(warning || (deleteDirectory ? "项目已移除，目录已删除。" : "项目已移除，目录已保留。"));
+      } catch (error) {
+        onError(error.message);
+        throw error;
+      }
+    });
   const projects = data?.projects || [],
     collections = data?.scanReport?.collections || [];
   const groups = [
@@ -445,6 +461,7 @@ function App() {
     batchStart,
     setEditor,
     setOrganization,
+    setRemoval,
     selected,
     toggleSelection,
     repos,
@@ -989,6 +1006,18 @@ function App() {
           </Suspense>
         </SurfaceBoundary>
       )}
+      {removal && (
+        <SurfaceBoundary active>
+          <Suspense fallback={<LoadingSurface />}>
+            <RemoveProject
+              project={projects.find((project) => project.key === removal.key) || removal}
+              busy={busy.has(removal.key)}
+              close={() => setRemoval(null)}
+              remove={removeProject}
+            />
+          </Suspense>
+        </SurfaceBoundary>
+      )}
     </AppShell>
   );
 }
@@ -1347,6 +1376,19 @@ function Service({ project: p, context: c }) {
               >
                 编辑展示信息
               </Menu.Item>
+              {!p.isPanel && (
+                <>
+                  <Menu.Divider />
+                  <Menu.Item
+                    color="red"
+                    leftSection={<IconTrash size={16} aria-hidden="true" />}
+                    disabled={busy || transitioning}
+                    onClick={() => c.setRemoval(p)}
+                  >
+                    移除项目
+                  </Menu.Item>
+                </>
+              )}
             </Menu.Dropdown>
           </Menu>
         </Group>

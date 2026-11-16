@@ -144,6 +144,7 @@ test('web API serves the browser and enforces session, host, origin and static a
   const post = (headers = {}, action = 'get-dashboard-data', body = JSON.stringify({ args: [] })) => fetch(`${base}/api/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body });
   assert.equal((await post()).status, 403);
   assert.equal((await post({}, 'restart-panel')).status, 403);
+  assert.equal((await post({}, 'remove-project', JSON.stringify({ args: [running, true] }))).status, 403);
   assert.equal((await post({ 'X-Control-Panel-Token': token, Origin: 'https://example.com' }, 'restart-panel')).status, 403);
   const unmanagedRestart = await post({ 'X-Control-Panel-Token': token }, 'restart-panel');
   assert.equal(unmanagedRestart.status, 400);
@@ -306,6 +307,64 @@ test('successful wrapper exit requires status confirmation and timeout does not 
     assert.equal(project.status, 'error');
     assert.match(project.details, message);
   }
+});
+
+test('removal persists across scans and restart, keeps children and can be reversed by adding the project path', async () => {
+  const directory = path.join(temporary, 'removable-parent');
+  const parent = writeManifest(directory, { name: 'Removable parent', children: [{ path: 'child' }] });
+  const child = writeManifest(path.join(directory, 'child'), { name: 'Retained child' });
+  const alias = path.join(temporary, 'alias-of-the-removable-parent');
+  fs.symlinkSync(directory, alias);
+  const roots = [...JSON.parse(fs.readFileSync(process.env.CONTROL_PANEL_CONFIG)).roots, directory, alias];
+  await core.invoke('set-project-roots', [roots]);
+  await assert.rejects(core.invoke('remove-project', [parent, true]), /包含其他项目/);
+  await core.invoke('remove-project', [parent]);
+  assert.ok(fs.existsSync(directory));
+  await core.initialize({ autoStart: false });
+  const { projects } = await core.invoke('get-dashboard-data');
+  assert.ok(!projects.some((project) => project.name === 'Removable parent'));
+  assert.deepEqual(projects.find((project) => project.key === child).ancestors, []);
+  await core.invoke('set-project-roots', [roots, directory]);
+  assert.ok((await core.invoke('get-dashboard-data')).projects.some((project) => project.key === parent));
+});
+
+test('optional removal deletes only the selected project directory', async () => {
+  const directory = path.join(temporary, 'deletion-fixture');
+  const childDir = path.join(directory, 'delete');
+  writeManifest(directory, { name: 'Delete fixture', kind: 'collection', children: [{ path: 'delete' }, { path: 'keep' }] });
+  const child = writeManifest(childDir, { name: 'Delete this project' });
+  const sibling = writeManifest(path.join(directory, 'keep'), { name: 'Keep sibling' });
+  fs.writeFileSync(path.join(childDir, 'file.txt'), 'fixture');
+  fs.symlinkSync(external, path.join(childDir, 'outside'));
+  const roots = [...JSON.parse(fs.readFileSync(process.env.CONTROL_PANEL_CONFIG)).roots, directory, childDir];
+  await core.invoke('set-project-roots', [roots]);
+  await assert.rejects(core.invoke('remove-project', [running, true]), /先停止项目/);
+  await assert.rejects(core.invoke('remove-project', [child, 'true']), /布尔值/);
+  const { warning } = await core.invoke('remove-project', [child, true]);
+  assert.equal(warning, undefined);
+  assert.equal(fs.existsSync(childDir), false);
+  assert.equal(fs.existsSync(external), true);
+  assert.deepEqual(fs.readdirSync(directory).sort(), ['control-panel.json', 'keep']);
+  const dashboard = await core.invoke('get-dashboard-data');
+  assert.ok(!dashboard.projects.some((project) => project.key === child));
+  assert.ok(dashboard.projects.some((project) => project.key === sibling));
+  assert.ok(!dashboard.config.roots.includes(childDir));
+  assert.ok(!dashboard.scanReport.issues.some((issue) => issue.path === childDir));
+  await assert.rejects(core.invoke('remove-project', [child, true]), /项目不存在/);
+});
+
+test('removal of a manually configured project preserves a shared directory', async () => {
+  const directory = path.join(temporary, 'legacy-shared');
+  fs.mkdirSync(directory);
+  const config = JSON.parse(fs.readFileSync(process.env.CONTROL_PANEL_CONFIG));
+  config.projects = ['first', 'second'].map((id) => ({ id, name: id, workingDirectory: directory }));
+  fs.writeFileSync(process.env.CONTROL_PANEL_CONFIG, JSON.stringify(config));
+  await core.invoke('refresh-projects');
+  const key = `legacy:${directory}:first`;
+  await assert.rejects(core.invoke('remove-project', [key, true]), /包含其他项目/);
+  await core.invoke('remove-project', [key, false]);
+  assert.ok(fs.existsSync(directory));
+  assert.deepEqual((await core.invoke('get-dashboard-data')).config.projects.map((item) => item.id), ['second']);
 });
 
 test('failed stop rejects direct action and prevents restart from starting another service', async () => {

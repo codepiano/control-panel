@@ -43,12 +43,14 @@ let projectState = {};
 let currentConfig = defaultConfig();
 const startingProjects = new Set();
 const stoppingProjects = new Set();
+const removingProjects = new Set();
 let batchStartInFlight = false;
 let portRegistrationQueue = Promise.resolve();
 
 function defaultConfig() {
   return {
     roots: [],
+    excludedManifests: [],
     scan: {
       manifestName: DEFAULT_MANIFEST_NAME,
       maxDepth: DEFAULT_SCAN_DEPTH,
@@ -108,6 +110,7 @@ function normalizeConfig(config) {
   }
   return {
     roots: normalizeList(base.roots),
+    excludedManifests: normalizeList(base.excludedManifests),
     scan: {
       manifestName: String(scan.manifestName || DEFAULT_MANIFEST_NAME).trim() || DEFAULT_MANIFEST_NAME,
       maxDepth: Math.min(1, Math.max(0, Number.isFinite(Number(scan.maxDepth)) ? Math.floor(Number(scan.maxDepth)) : DEFAULT_SCAN_DEPTH)),
@@ -773,6 +776,7 @@ function discoverProjects(config) {
   const discovered = [];
   const seenKeys = new Set();
   const seenLocations = new Set();
+  const excluded = new Set(config.excludedManifests);
 
   const issues = [];
   const collections = [];
@@ -799,9 +803,10 @@ function discoverProjects(config) {
     if (manifest.kind === 'collection' && (typeof manifest.name !== 'string' || !manifest.name.trim())) {
       issues.push({ path: manifestPath, detail: '集合必须声明 name' }); active.delete(canonical); return;
     }
+    const hidden = manifest.kind !== 'collection' && excluded.has(canonical);
     if (manifest.kind === 'collection') {
       collections.push({ key, name, manifestPath, notes: String(manifest.notes || ''), ancestors });
-    } else {
+    } else if (!hidden) {
       try {
         const project = buildProjectFromManifest(manifestPath, manifest, root, 'auto');
         if (project.release && !project.statusCommand) throw new Error('release 需要 statusCommand');
@@ -820,11 +825,15 @@ function discoverProjects(config) {
       const childDir = path.resolve(parentDir, child.path);
       let canonicalChild;
       try { canonicalChild = fs.realpathSync(childDir); }
-      catch { issues.push({ path: childDir, detail: '声明的子项目目录不存在' }); continue; }
+      catch {
+        const childManifest = path.resolve(canonicalParent, child.path, config.scan.manifestName);
+        if (!excluded.has(childManifest)) issues.push({ path: childDir, detail: '声明的子项目目录不存在' });
+        continue;
+      }
       if (!childDir.startsWith(`${parentDir}${path.sep}`) || !canonicalChild.startsWith(`${canonicalParent}${path.sep}`)) {
         issues.push({ path: childDir, detail: '子项目必须位于父项目目录内，不能通过路径或符号链接越界' }); continue;
       }
-      visit(path.join(childDir, config.scan.manifestName), root, [...ancestors, { key, name }], { role: String(child.role || ''), notes: String(child.notes || '') }, canonicalParent);
+      visit(path.join(childDir, config.scan.manifestName), root, hidden ? ancestors : [...ancestors, { key, name }], { role: String(child.role || ''), notes: String(child.notes || '') }, canonicalParent);
     }
     active.delete(canonical);
   };
@@ -976,7 +985,11 @@ async function performPortRegistration(input = {}) {
   writeProjectManifest(manifestPath, { ...manifest, ports });
   const config = loadConfig();
   try {
-    if (!existing) saveConfig({ ...config, roots: normalizeList([...config.roots, projectDir]) });
+    if (!existing) saveConfig({
+      ...config,
+      roots: normalizeList([...config.roots, projectDir]),
+      excludedManifests: config.excludedManifests.filter((location) => location !== manifestPath),
+    });
   } catch (error) {
     fs.writeFileSync(manifestPath, previousText);
     throw error;
@@ -1017,7 +1030,112 @@ function findProjectByKey(projectKey) {
   return projectsCache.find((item) => item.key === projectKey);
 }
 
+function realPathIfPresent(location) {
+  try { return fs.realpathSync(location); }
+  catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return path.resolve(location);
+    throw error;
+  }
+}
+
+function containsPath(directory, location) {
+  const relative = path.relative(directory, location);
+  return !relative || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
+}
+
+function projectDirectoryForDeletion(project, projects, config) {
+  if (!path.isAbsolute(project.projectDir)) throw new Error('只能删除使用绝对路径的项目目录');
+  const stat = fs.lstatSync(project.projectDir);
+  if (!stat.isDirectory()) throw new Error('只能删除实际目录，项目路径不能是符号链接');
+  const directory = fs.realpathSync(project.projectDir);
+  const protectedPaths = [os.homedir(), APP_ROOT, process.env.PROJECT_RELEASE_ORIGIN || APP_ROOT, USER_DATA, getConfigPath()];
+  if (directory === path.parse(directory).root || protectedPaths.some((location) => containsPath(directory, realPathIfPresent(location)))) {
+    throw new Error('项目目录包含控制面板或本机用户目录，无法删除');
+  }
+  if (project.manifestPath && !containsPath(directory, fs.realpathSync(project.manifestPath))) {
+    throw new Error('项目配置指向目录之外，无法删除');
+  }
+  const otherPaths = [
+    ...projects.filter((item) => item.key !== project.key).flatMap((item) => [item.projectDir, item.workingDirectory]),
+    ...scanReport.collections.map((item) => path.dirname(item.manifestPath)),
+  ];
+  if (otherPaths.some((location) => location && containsPath(directory, realPathIfPresent(location))) ||
+      config.roots.some((root) => {
+        const location = realPathIfPresent(root);
+        return location !== directory && containsPath(directory, location);
+      })) {
+    throw new Error('该目录包含其他项目、集合或扫描入口，请取消勾选删除目录');
+  }
+  return { directory, stat };
+}
+
+async function removeProject(projectKey, deleteDirectory = false) {
+  if (typeof deleteDirectory !== 'boolean') throw new Error('删除目录选项必须为布尔值');
+  if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey) || removingProjects.has(projectKey)) {
+    throw new Error('项目正在执行操作，请稍后重试');
+  }
+  removingProjects.add(projectKey);
+  try {
+    let config = loadConfig();
+    let projects = discoverProjects(config);
+    let project = projects.find((item) => item.key === projectKey);
+    if (!project) throw new Error('项目不存在，请刷新后重试');
+    if (isPanelProject(project)) throw new Error('无法移除控制面板自身');
+    let directory;
+    if (deleteDirectory) {
+      const target = projectDirectoryForDeletion(project, projects, config);
+      const status = await getProjectStatus(project);
+      if (status.status === 'running' || isPidAlive(status.pid)) throw new Error('请先停止项目，再删除目录');
+      if (gitSync.snapshot().busy) throw new Error('仓库操作正在进行，请稍后重试');
+      config = loadConfig();
+      projects = discoverProjects(config);
+      project = projects.find((item) => item.key === projectKey);
+      if (!project || isPanelProject(project)) throw new Error('项目已变更，请刷新后重试');
+      const current = projectDirectoryForDeletion(project, projects, config);
+      if (current.directory !== target.directory || current.stat.dev !== target.stat.dev || current.stat.ino !== target.stat.ino ||
+          current.stat.ctimeMs !== target.stat.ctimeMs) {
+        throw new Error('项目目录已变更，请刷新后重试');
+      }
+      directory = current.directory;
+    }
+    const nextConfig = project.manifestPath
+      ? { ...config, excludedManifests: [...config.excludedManifests, fs.realpathSync(project.manifestPath)] }
+      : { ...config, projects: config.projects.filter((entry) => !entry || buildProjectFromLegacyEntry(entry).key !== projectKey) };
+    let staged;
+    if (directory) {
+      nextConfig.roots = config.roots.filter((root) => realPathIfPresent(root) !== directory);
+      // Keep the move and config write synchronous so scanning cannot observe a partial removal.
+      staged = fs.mkdtempSync(path.join(path.dirname(directory), '.control-panel-remove-'));
+      const stagedDirectory = path.join(staged, path.basename(directory));
+      try {
+        fs.renameSync(directory, stagedDirectory);
+        try { saveConfig(nextConfig); }
+        catch (error) { fs.renameSync(stagedDirectory, directory); throw error; }
+      } catch (error) {
+        try { fs.rmdirSync(staged); }
+        catch { throw new Error(`移除失败，请检查暂存位置 ${staged}：${error.message}`); }
+        throw error;
+      }
+    } else {
+      saveConfig(nextConfig);
+    }
+    let warning;
+    if (staged) {
+      try { await fs.promises.rm(staged, { recursive: true }); }
+      catch (error) { warning = `项目已移除，目录清理失败，请检查 ${staged}：${error.message}`; }
+    }
+    try { await refreshAll(); }
+    catch (error) {
+      warning = warning || `项目已移除，刷新失败：${error.message}`;
+    }
+    return { warning };
+  } finally {
+    removingProjects.delete(projectKey);
+  }
+}
+
 async function startProject(projectKey, { restart = false } = {}) {
+  if (removingProjects.has(projectKey)) throw new Error('项目正在移除，请稍后重试');
   if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey)) {
     if (findProjectByKey(projectKey)?.release) throw new Error('服务正在切换状态，请稍后重试');
     return { outcome: 'skipped', detail: '正在切换状态' };
@@ -1100,7 +1218,7 @@ async function performProjectStart(projectKey, { restart = false } = {}) {
 }
 
 async function stopProject(projectKey) {
-  if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey)) throw new Error('服务正在切换状态，请稍后重试');
+  if (startingProjects.has(projectKey) || stoppingProjects.has(projectKey) || removingProjects.has(projectKey)) throw new Error('服务正在切换状态，请稍后重试');
   stoppingProjects.add(projectKey);
   try { return await performProjectStop(projectKey); }
   finally { stoppingProjects.delete(projectKey); await refreshAll(); }
@@ -1498,6 +1616,7 @@ function registerActions() {
   });
 
   registerAction('save-project-organization', (keys, input) => saveProjectOrganization(keys, input));
+  registerAction('remove-project', removeProject);
   registerAction('start-projects', (keys) => startProjects(keys));
   registerAction('register-project-ports', (input) => registerProjectPorts(input));
   registerAction('get-port-allocations', async () => (await refreshAll()).portReport);
@@ -1560,11 +1679,16 @@ function registerActions() {
     return true;
   });
 
-  registerAction('set-project-roots', async (roots) => {
+  registerAction('set-project-roots', async (roots, addedRoot) => {
     const config = loadConfig();
+    const nextRoots = normalizeList(roots);
+    const restoredManifest = nextRoots.includes(addedRoot)
+      ? realPathIfPresent(path.join(addedRoot, config.scan.manifestName))
+      : null;
     saveConfig({
       ...config,
-      roots: normalizeList(Array.isArray(roots) ? roots : []),
+      roots: nextRoots,
+      excludedManifests: config.excludedManifests.filter((location) => location !== restoredManifest),
     });
     await refreshAll();
     return currentConfig;
