@@ -130,7 +130,12 @@ function repositoryStatusText(repo) {
     parts.push(
       `${repositoryLabels[repo.status] || repo.status}${repo.ahead ? ` ↑${repo.ahead}` : ""}${repo.behind ? ` ↓${repo.behind}` : ""}`,
     );
-  if (repo.dirty) parts.push(`未提交 ${repo.dirty} 项`);
+  if (repo.pullBlockingChanges ?? repo.dirty)
+    parts.push(`未提交 ${repo.pullBlockingChanges ?? repo.dirty} 项`);
+  if (repo.submoduleUpdates?.length)
+    parts.push(`${repo.submoduleUpdates.length} 个子模块待更新`);
+  else if (repo.dirty && repo.pullBlockingChanges === 0)
+    parts.push("子模块有未提交改动");
   if (repo.inProgress) parts.push("Git 操作进行中");
   return `${repositoryNeedsAttention(repo) ? "⚠ " : ""}${parts.join(" · ")}`;
 }
@@ -140,8 +145,8 @@ function repositoryActionGuidance(repo) {
   if (repo.error || repo.status === "error")
     actions.push("检查失败：查看下方原因，处理后重新检查");
   if (repo.inProgress) actions.push("先在项目中完成或取消正在进行的 Git 操作");
-  if (repo.dirty)
-    actions.push(`先在项目中检查并提交或暂存 ${repo.dirty} 项改动，再进行同步`);
+  if (repo.pullBlockingChanges ?? repo.dirty)
+    actions.push(`先在项目中处理 ${repo.pullBlockingChanges ?? repo.dirty} 项未提交改动，再进行同步`);
   if (repo.status === "pinned")
     actions.push("版本与父仓库一致，无需操作；更新由父仓库统一管理");
   if (repo.status === "detached")
@@ -158,8 +163,10 @@ function repositoryActionGuidance(repo) {
     );
   else if (repo.behind)
     actions.push(
-      `远端有 ${repo.behind} 个新提交：${repo.dirty || repo.inProgress || repo.error ? "处理上述问题后再拉取" : "点击「拉取」更新本机代码"}`,
+      `远端有 ${repo.behind} 个新提交：${repositoryCanSync(repo, "pull") ? "点击「拉取」更新本机代码" : "处理上述问题后再拉取"}`,
     );
+  else if (repositoryCanSync(repo, "pull") && repo.submoduleUpdates?.length)
+    actions.push("处理子模块改动后，点击父仓库的「拉取」重试更新");
   else if (repo.ahead)
     actions.push(
       `本地有 ${repo.ahead} 个未推送提交：${repo.dirty || repo.inProgress || repo.error ? "处理上述问题后再推送" : "点击「推送」上传到远端"}`,
@@ -174,12 +181,14 @@ function repositoryCanSync(repo, kind) {
     repo.remoteUrl &&
     repo.mergeRef?.startsWith("refs/heads/") &&
     !repo.error &&
-    !repo.dirty &&
     !repo.inProgress &&
     !["unchecked", "error", "diverged", "detached", "untracked"].includes(
       repo.status,
     ) &&
-    (kind === "pull" ? repo.behind && !repo.ahead : repo.ahead && !repo.behind),
+    (kind === "pull"
+      ? !(repo.pullBlockingChanges ?? repo.dirty) &&
+        !repo.ahead && (repo.behind || repo.submoduleUpdates?.length)
+      : !repo.dirty && repo.ahead && !repo.behind),
   );
 }
 

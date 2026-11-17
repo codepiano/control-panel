@@ -38,7 +38,7 @@ export default function Repositories({
       : [],
   );
   const pending = repositories.filter(needsAttention),
-    pulls = repositories.filter((r) => r.behind && !r.ahead),
+    pulls = repositories.filter((r) => !r.ahead && (r.behind || r.submoduleUpdates?.length)),
     pushes = repositories.filter((r) => r.ahead && !r.behind);
   const readyPulls = pulls.filter((r) => canSync(r, "pull")).length,
     readyPushes = pushes.filter((r) => canSync(r, "push")).length;
@@ -85,6 +85,7 @@ export default function Repositories({
   const outcomeLabel = {
     checked: "已检查",
     success: "成功",
+    partial: "部分完成",
     skipped: "跳过",
     failed: "失败",
   };
@@ -148,11 +149,11 @@ export default function Repositories({
         {recent.length > 0 && (
           <Text
             size="xs"
-            c={count("failed") || count("skipped") ? "red" : "dimmed"}
+            c={count("failed") || count("skipped") || count("partial") ? "red" : "dimmed"}
           >
             最近一次同步：成功 {count("success")} · 失败 {count("failed")} ·
-            跳过 {count("skipped")} · {timestamp(payload.lastSync?.finishedAt)}
-            。失败和跳过原因见仓库及下方逐项结果。
+            跳过 {count("skipped")}{count("partial") > 0 && ` · 部分完成 ${count("partial")}`} ·{" "}
+            {timestamp(payload.lastSync?.finishedAt)}。详情见仓库及下方逐项结果。
           </Text>
         )}
         <Text size="xs" c={payload.error ? "red" : "dimmed"} role="status">
@@ -228,7 +229,7 @@ export default function Repositories({
                     <Text
                       size="xs"
                       c={
-                        ["failed", "skipped"].includes(r.lastSyncResult.outcome)
+                        ["failed", "skipped", "partial"].includes(r.lastSyncResult.outcome)
                           ? "red"
                           : "dimmed"
                       }
@@ -295,7 +296,7 @@ export default function Repositories({
                   key={i}
                   size="xs"
                   c={
-                    ["failed", "skipped"].includes(r.outcome) ? "red" : "dimmed"
+                    ["failed", "skipped", "partial"].includes(r.outcome) ? "red" : "dimmed"
                   }
                   mb={5}
                 >

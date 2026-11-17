@@ -3,8 +3,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 
-function git(directory, args) {
-  return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args], {
+function git(directory, args, options = []) {
+  return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...options, ...args], {
     timeout: 45000, maxBuffer: 2 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes -o ConnectTimeout=10' },
   }, (error, stdout, stderr) => {
@@ -20,7 +20,7 @@ function git(directory, args) {
 async function fetchWithRetry(directory, remote, shouldContinue) {
   const delays = [1000, 2000];
   for (let attempt = 0; ; attempt++) {
-    try { return await git(directory, ['fetch', '--prune', '--no-tags', remote]); }
+    try { return await git(directory, ['fetch', '--prune', '--no-tags', '--no-recurse-submodules', remote]); }
     catch (error) {
       if (!error.retryable || attempt === delays.length || !shouldContinue()) {
         if (attempt) error.message += `（已尝试 ${attempt + 1} 次）`;
@@ -38,6 +38,24 @@ function gitFailure(command, error, stdout, stderr) {
   return `git ${command} 失败（${error.killed ? '执行超时或被终止' : `退出码 ${error.code}`}）：${detail}`;
 }
 async function optionalGit(directory, args) { try { return await git(directory, args); } catch { return ''; } }
+function readWorkingTree(status) {
+  const entries = status.split('\0');
+  const submoduleUpdates = [];
+  let dirty = 0, pullBlockingChanges = 0;
+  for (let index = 0; index < entries.length && entries[index]; index++) {
+    const entry = entries[index];
+    // A worktree-only gitlink change is handled after the parent fast-forwards.
+    const submodule = entry.match(/^1 \.M S([C.])[M.][U.] 160000 160000 160000 \S+ \S+ ([\s\S]+)$/);
+    dirty++;
+    if (submodule) {
+      if (submodule[1] === 'C') submoduleUpdates.push(submodule[2]);
+    } else {
+      pullBlockingChanges++;
+      if (entry.startsWith('2 ')) index++; // A rename or copy has a second path.
+    }
+  }
+  return { dirty, pullBlockingChanges, submoduleUpdates };
+}
 function dailySlot(date = new Date()) {
   const due = new Date(date); due.setHours(3, 0, 0, 0);
   if (date < due) due.setDate(due.getDate() - 1);
@@ -46,7 +64,7 @@ function dailySlot(date = new Date()) {
 async function inspectRepository(repo) {
   const directory = repo.directory;
   const branch = await optionalGit(directory, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
-  const dirty = (await git(directory, ['status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=none'])).split('\n').filter(Boolean).length;
+  const workingTree = readWorkingTree(await git(directory, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignore-submodules=none']));
   const gitDir = await git(directory, ['rev-parse', '--absolute-git-dir']);
   const inProgress = ['index.lock', 'HEAD.lock', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'sequencer'].some((file) => fs.existsSync(path.join(gitDir, file)));
   const upstream = branch ? await optionalGit(directory, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']) : '';
@@ -61,12 +79,12 @@ async function inspectRepository(repo) {
   const pinnedCommit = gitlink.match(/^160000 ([0-9a-f]+) 0\t/)?.[1] || '';
   const pinned = !branch && Boolean(pinnedCommit && pinnedCommit === head);
   const status = !branch ? (pinned ? 'pinned' : 'detached') : !upstream || !remoteUrl ? 'untracked' : ahead && behind ? 'diverged' : behind ? 'behind' : ahead ? 'ahead' : 'synced';
-  return { ...repo, head, superproject, pinnedCommit, branch, dirty, inProgress, upstream, remote, mergeRef, ahead, behind, status, remoteUrl: remoteUrl.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1***@') };
+  return { ...repo, head, superproject, pinnedCommit, branch, ...workingTree, inProgress, upstream, remote, mergeRef, ahead, behind, status, remoteUrl: remoteUrl.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1***@') };
 }
 function canProcess(repo, kind) {
-  if (!repo.checkedAt || !repo.branch || !repo.upstream || !repo.remoteUrl || !repo.mergeRef?.startsWith('refs/heads/') || repo.error || repo.dirty || repo.inProgress) return false;
-  const pull = repo.status === 'behind' && repo.behind > 0 && !repo.ahead;
-  const push = repo.status === 'ahead' && repo.ahead > 0 && !repo.behind;
+  if (!repo.checkedAt || !repo.branch || !repo.upstream || !repo.remoteUrl || !repo.mergeRef?.startsWith('refs/heads/') || repo.error || repo.inProgress) return false;
+  const pull = !repo.ahead && !(repo.pullBlockingChanges ?? repo.dirty) && (repo.behind > 0 || repo.submoduleUpdates?.length > 0);
+  const push = repo.status === 'ahead' && repo.ahead > 0 && !repo.behind && !repo.dirty;
   return kind === 'pull' ? pull : kind === 'push' ? push : pull || push;
 }
 function createGitSync({ statePath, getProjects, now = () => new Date(), checkConcurrency = 4 }) {
@@ -117,6 +135,33 @@ function createGitSync({ statePath, getProjects, now = () => new Date(), checkCo
       return { ...inspected, error: '', checkedAt: now().toISOString() };
     } catch (error) { return { ...repo, error: error.message, status: 'error', checkedAt: now().toISOString() }; }
   }
+  async function updateSubmodules(parent) {
+    let count = 0;
+    const warnings = [];
+    for (const relative of parent.submoduleUpdates) {
+      const directory = path.join(parent.directory, relative);
+      const registered = state.repositories.find((repo) => repo.directory === directory);
+      try {
+        let child = await inspectRepository(registered || { directory });
+        if (child.superproject !== parent.directory || !child.pinnedCommit) {
+          warnings.push(`跳过子模块 ${relative}（无法确认父仓库指定版本）`);
+        } else if (child.inProgress || child.dirty) {
+          warnings.push(`跳过子模块 ${relative}（${child.inProgress ? 'Git 操作进行中' : '有未提交改动'}）`);
+        } else if (child.head !== child.pinnedCommit) {
+          await git(parent.directory, ['submodule', 'update', '--checkout', '--', relative], ['--literal-pathspecs', '-c', 'submodule.recurse=false']);
+          count++;
+          if (registered) child = await inspectRepository(registered);
+        }
+        if (registered) {
+          state.repositories = state.repositories.map((repo) => repo.key === registered.key
+            ? { ...child, checkedAt: now().toISOString(), error: '' } : repo);
+        }
+      } catch (error) {
+        warnings.push(`子模块 ${relative} 更新失败：${error.message}`);
+      }
+    }
+    return { count, warnings };
+  }
   async function execute(kind, keys, scheduled = false) {
     if (!['check', 'pull', 'push', 'sync'].includes(kind)) throw new Error('未知仓库操作');
     if (keys !== undefined && (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string'))) throw new Error('仓库参数应为数组');
@@ -136,19 +181,32 @@ function createGitSync({ statePath, getProjects, now = () => new Date(), checkCo
         let updated = await checkOne(repo);
         let outcome = updated.error ? 'failed' : 'checked', detail = updated.error || (updated.status === 'pinned' ? '子模块与父仓库指定版本一致，无需单独拉取或推送' : updated.upstream && updated.remoteUrl ? '远端状态已更新' : '已检查本地状态；没有可同步的跟踪分支');
         if (kind !== 'check' && !updated.error) {
-          const action = kind === 'sync' ? (updated.behind ? 'pull' : 'push') : kind;
-          const blocked = !updated.branch ? '当前为 detached HEAD' : !updated.upstream || !updated.remoteUrl || !updated.mergeRef.startsWith('refs/heads/') ? '未配置远端跟踪分支' : updated.dirty ? '有未提交修改' : updated.inProgress ? 'Git 操作进行中' : updated.ahead && updated.behind ? '分支已分叉，需要先处理合并' : action === 'push' && updated.behind ? '远端有新提交，请先拉取' : '';
+          const action = kind === 'sync' ? (updated.behind || (!updated.ahead && updated.submoduleUpdates.length) ? 'pull' : 'push') : kind;
+          const dirty = (repository) => action === 'pull' ? repository.pullBlockingChanges : repository.dirty;
+          const blocked = !updated.branch ? '当前为 detached HEAD' : !updated.upstream || !updated.remoteUrl || !updated.mergeRef.startsWith('refs/heads/') ? '未配置远端跟踪分支' : dirty(updated) ? '有未提交修改' : updated.inProgress ? 'Git 操作进行中' : updated.ahead && updated.behind ? '分支已分叉，需要先处理合并' : action === 'push' && updated.behind ? '远端有新提交，请先拉取' : '';
           if (blocked) { outcome = 'skipped'; detail = blocked; }
-          else if (!(action === 'push' ? updated.ahead : updated.behind)) { outcome = 'skipped'; detail = '无需同步'; }
+          else if (!(action === 'push' ? updated.ahead : !updated.ahead && (updated.behind || updated.submoduleUpdates.length))) { outcome = 'skipped'; detail = '无需同步'; }
           else {
             try {
               // Re-read local state immediately before changing the branch or publishing commits.
               const current = await inspectRepository(repo);
-              if (current.head !== updated.head || current.branch !== updated.branch || current.upstream !== updated.upstream || current.dirty || current.inProgress) throw new Error('仓库状态发生变化，请重新检查');
-              if (action === 'pull') await git(repo.directory, ['merge', '--ff-only', '@{upstream}']);
-              else await git(repo.directory, ['push', '--', current.remote, `HEAD:${current.mergeRef}`]);
+              if (current.head !== updated.head || current.branch !== updated.branch || current.upstream !== updated.upstream || current.ahead !== updated.ahead || current.behind !== updated.behind || dirty(current) || current.inProgress) throw new Error('仓库状态发生变化，请重新检查');
+              outcome = 'success';
+              if (action === 'pull') {
+                if (current.behind) await git(repo.directory, ['merge', '--ff-only', '@{upstream}'], ['-c', 'submodule.recurse=false']);
+                const parent = current.behind ? await inspectRepository(repo) : current;
+                const { count, warnings } = await updateSubmodules(parent);
+                if (warnings.length) outcome = 'partial';
+                detail = [
+                  current.behind ? '已快进更新' : '父仓库已同步',
+                  count ? `已更新 ${count} 个子模块` : '',
+                  ...warnings,
+                ].filter(Boolean).join('；');
+              } else {
+                await git(repo.directory, ['push', '--', current.remote, `HEAD:${current.mergeRef}`]);
+                detail = '已推送';
+              }
               updated = { ...await inspectRepository(repo), checkedAt: now().toISOString(), error: '' };
-              outcome = 'success'; detail = action === 'pull' ? '已快进更新' : '已推送';
             } catch (error) { outcome = 'failed'; detail = error.message; updated = { ...updated, status: 'error', error: detail }; }
           }
         }

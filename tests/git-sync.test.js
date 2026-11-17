@@ -460,6 +460,69 @@ test('detached submodules matching the parent are pinned; changed versions and s
   assert.equal((await inspectRepository({ directory: f.one })).status, 'detached');
 });
 
+test('pull updates clean submodules, reports dirty ones, and can retry their checkout after the parent is synced', async () => {
+  const parent = fixture('submodule-pull-parent');
+  const child = fixture('submodule-pull-child');
+  const modules = ['services/clean child', 'services/dirty-child'];
+  for (const relative of modules) git(parent.two, '-c', 'protocol.file.allow=always', 'submodule', 'add', child.remote, relative);
+  git(parent.two, 'commit', '-m', 'add submodules');
+  git(parent.two, 'push');
+  git(parent.one, 'pull', '--ff-only');
+  git(parent.one, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init');
+  git(parent.one, 'config', 'submodule.recurse', 'true');
+  for (const relative of modules) git(path.join(parent.one, relative), 'config', 'protocol.file.allow', 'always');
+
+  const original = git(child.one, 'rev-parse', 'HEAD');
+  commit(child.one, 'file.txt', 'new submodule version');
+  const target = git(child.one, 'rev-parse', 'HEAD');
+  git(child.one, 'push');
+  for (const relative of modules) {
+    const directory = path.join(parent.two, relative);
+    git(directory, 'fetch', 'origin');
+    git(directory, 'checkout', '--detach', target);
+  }
+  git(parent.two, 'commit', '-am', 'update submodule pins');
+  git(parent.two, 'push');
+  // The child can advance again without changing the version the parent specifies.
+  commit(child.one, 'file.txt', 'another submodule version');
+  git(child.one, 'push');
+
+  const [clean, dirty] = modules.map((relative) => path.join(parent.one, relative));
+  const changedFile = path.join(dirty, 'file.txt');
+  const untrackedFile = path.join(dirty, 'untracked.txt');
+  fs.writeFileSync(changedFile, 'local edit');
+  git(dirty, 'add', 'file.txt');
+  fs.writeFileSync(untrackedFile, 'local untracked file');
+  const service = manager(parent, { getProjects: () => [parent.one, clean, dirty].map((projectDir) => ({ projectDir })) });
+  const checked = await run(service, 'check');
+  const parentRepo = checked.repositories[0];
+  const { repositoryCanSync } = require('../src/ui/model.cjs');
+  assert.ok(parentRepo.dirty);
+  assert.equal(repositoryCanSync(parentRepo, 'pull'), true);
+  service.request('pull');
+  const partial = await service.wait();
+  assert.equal(partial.results[0].outcome, 'partial', partial.results[0].detail);
+  assert.match(partial.results[0].detail, /已更新 1 个子模块.*跳过子模块 services\/dirty-child（有未提交改动）/);
+  assert.equal(git(parent.one, 'rev-parse', 'HEAD'), git(parent.two, 'rev-parse', 'HEAD'));
+  assert.equal(git(clean, 'rev-parse', 'HEAD'), target);
+  assert.equal(partial.repositories[1].status, 'pinned');
+  assert.equal(git(dirty, 'rev-parse', 'HEAD'), original);
+  assert.equal(git(dirty, 'diff', '--cached', '--name-only'), 'file.txt');
+  assert.equal(fs.readFileSync(changedFile, 'utf8'), 'local edit');
+  assert.equal(fs.readFileSync(untrackedFile, 'utf8'), 'local untracked file');
+  assert.equal(repositoryCanSync(partial.repositories[0], 'pull'), true);
+
+  git(dirty, 'restore', '--staged', '--worktree', 'file.txt');
+  fs.rmSync(untrackedFile);
+  service.request('sync');
+  const retried = await service.wait();
+  assert.equal(retried.results[0].outcome, 'success');
+  assert.match(retried.results[0].detail, /父仓库已同步；已更新 1 个子模块/);
+  assert.equal(retried.repositories[0].dirty, 0);
+  assert.equal(retried.repositories[2].status, 'pinned');
+  assert.equal(git(dirty, 'rev-parse', 'HEAD'), target);
+});
+
 test('a project group check fetches every selected child and preserves unrelated snapshots and working trees', async () => {
   const first = fixture('group-parent'), child = fixture('group-child'), other = fixture('group-other');
   const service = manager(first, { getProjects: () => [
