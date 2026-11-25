@@ -156,11 +156,17 @@ def source():
     return 'sha256:' + digest.hexdigest(), entries
 
 
-def signature(pid):
+def signature(pid, stable=True):
     if not isinstance(pid, int) or pid < 2:
         return None
-    result = run(['ps', '-p', str(pid), '-o', 'lstart=', '-o', 'command='], check=False)
+    env = dict(runtime_env(), LC_ALL='C', TZ='UTC') if stable else None
+    result = run(['ps', '-p', str(pid), '-o', 'lstart=', '-o', 'command='], env=env, check=False)
     return result.stdout.decode(errors='replace').strip() if result.returncode == 0 else None
+
+
+def matches_identity(process):
+    # Earlier activations stored ps output in the caller's locale and timezone.
+    return signature(process['pid'], stable=process.get('identityFormat') == 1) == process['identity']
 
 
 def identities(directory):
@@ -188,9 +194,9 @@ def identities(directory):
             ancestor = int(result.stdout.strip())
         except ValueError:
             break
-    records = [{'pid': p, 'identity': signature(p)} for p in sorted(selected)]
+    records = [{'pid': p, 'identity': signature(p), 'identityFormat': 1} for p in sorted(selected)]
     time.sleep(.15)
-    return [r for r in records if r['identity'] and signature(r['pid']) == r['identity']]
+    return [r for r in records if r['identity'] and matches_identity(r)]
 
 
 def active():
@@ -263,7 +269,7 @@ def state():
     record = active()
     running = None
     if record and verified(record['artifactId']):
-        matches = [p for p in record['processes'] if signature(p['pid']) == p['identity']]
+        matches = [p for p in record['processes'] if matches_identity(p)]
         if matches:
             running = record['runningRevision']
     return dict(sourceRevision=revision, builtRevision=built_revision, runningRevision=running)
@@ -439,7 +445,7 @@ def stop():
         raise RuntimeError('停止失败，拒绝切换')
     if record:
         deadline = time.monotonic() + 10
-        while any(signature(p['pid']) == p['identity'] for p in record['processes']):
+        while any(matches_identity(p) for p in record['processes']):
             if time.monotonic() >= deadline:
                 raise RuntimeError('停止后仍有目标版本进程存活，拒绝切换')
             time.sleep(.2)
@@ -451,7 +457,7 @@ def status():
     record = active()
     result = legacy('status', artifact(record['artifactId']) if record else ROOT, check=False)
     sys.stderr.buffer.write(result.stdout + result.stderr)
-    if record and not any(signature(p['pid']) == p['identity'] for p in record['processes']):
+    if record and not any(matches_identity(p) for p in record['processes']):
         return dict(status='unknown'), 3
     return dict(status='running' if result.returncode == 0 else 'stopped'), result.returncode
 
@@ -480,6 +486,24 @@ def activate():
     return dict(runningRevision=target)
 
 
+def start_at_login():
+    # Login starts the last successfully activated artifact without a build or network access.
+    record = active()
+    directory = artifact(record['artifactId']) if record else ROOT
+    result = legacy('status', directory, check=False)
+    if result.returncode == 0:
+        return dict(status='running')
+    if record and any(matches_identity(process) for process in record['processes']):
+        raise RuntimeError('已有服务进程，拒绝在登录时重复启动')
+    identifier = read_json(STORE / 'retention.json', {}).get('current')
+    if not identifier or not verified(identifier):
+        raise RuntimeError('没有已验证的发布版本，请先手动启动控制面板')
+    ACTIVE.unlink(missing_ok=True)
+    os.environ['PROJECT_TARGET_REVISION'] = identifier
+    os.environ['PROJECT_ARTIFACT_ID'] = identifier
+    return activate()
+
+
 def main():
     action = sys.argv[1]
     if action == 'version':
@@ -498,6 +522,8 @@ def main():
             value = ReleaseRetention(STORE, lambda item: verified(item, full=True)).prune()
         elif action == 'stop':
             value = stop()
+        elif action == 'login' and CONFIG.get('panel'):
+            value = start_at_login()
         elif action in {'start', 'restart'}:
             if action == 'start' and status()[1] == 0:
                 value = dict(status='running')

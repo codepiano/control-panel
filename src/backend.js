@@ -12,6 +12,7 @@ const STATUS_REFRESH_MS = 30000;
 const dashboardCache = createSnapshotCache(collectDashboardSnapshot, { ttlMs: STATUS_REFRESH_MS });
 let statusRefreshTimer = null;
 const APP_ROOT = path.resolve(__dirname, '..');
+const PANEL_ORIGIN = process.env.PROJECT_RELEASE_ORIGIN || APP_ROOT;
 const USER_DATA = process.env.CONTROL_PANEL_DATA || path.join(os.homedir(), 'Library', 'Application Support', 'control-panel');
 const BACKEND_STARTED_AT = new Date(Date.now() - process.uptime() * 1000).toISOString();
 const actions = new Map();
@@ -34,9 +35,9 @@ const PROJECT_ICON_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const MAX_PROJECT_ICON_BYTES = 5 * 1024 * 1024;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.next', '.turbo', 'vendor', 'target', 'coverage', 'venv', '__pycache__']);
 const LOGIN_ITEM_SCRIPTS = {
-  install: path.join(APP_ROOT, 'scripts', 'install-login-item.sh'),
-  uninstall: path.join(APP_ROOT, 'scripts', 'uninstall-login-item.sh'),
-  status: path.join(APP_ROOT, 'scripts', 'login-item-status.sh'),
+  install: path.join(PANEL_ORIGIN, 'scripts', 'install-login-item.sh'),
+  uninstall: path.join(PANEL_ORIGIN, 'scripts', 'uninstall-login-item.sh'),
+  status: path.join(PANEL_ORIGIN, 'scripts', 'login-item-status.sh'),
 };
 let projectsCache = [];
 let projectState = {};
@@ -57,6 +58,7 @@ function defaultConfig() {
     },
     projects: [],
     projectPreferences: {},
+    startupOrder: [],
   };
 }
 
@@ -117,15 +119,25 @@ function normalizeConfig(config) {
     },
     projects: Array.isArray(base.projects) ? base.projects : [],
     projectPreferences,
+    startupOrder: normalizeList(base.startupOrder).filter((key) => projectPreferences[key]?.startOnPanelLaunch),
   };
 }
 
 function isPanelProject(project) {
-  return path.resolve(project.projectDir || project.workingDirectory) === path.resolve(process.env.PROJECT_RELEASE_ORIGIN || APP_ROOT);
+  return path.resolve(project.projectDir || project.workingDirectory) === path.resolve(PANEL_ORIGIN);
 }
 
 function startsWithPanel(config, projectKey) {
   return config.projectPreferences?.[projectKey]?.startOnPanelLaunch === true;
+}
+
+function startupProjectKeys(config, projects) {
+  const keys = new Set(projects.filter((project) =>
+    project.startCommand && !isPanelProject(project) && startsWithPanel(config, project.key)
+  ).map((project) => project.key));
+  // Services configured before ordering was introduced keep their discovery order.
+  const ordered = config.startupOrder.filter((key) => keys.delete(key));
+  return [...ordered, ...keys];
 }
 
 function getProjectIconsDir() {
@@ -1008,6 +1020,7 @@ async function collectDashboardSnapshot() {
   return {
     config,
     projects,
+    startupProjectKeys: startupProjectKeys(config, projects),
     scanReport,
     portReport,
     backendStartedAt: BACKEND_STARTED_AT,
@@ -1378,7 +1391,7 @@ function runLoginItemScript(scriptPath) {
       '/bin/bash',
       [scriptPath],
       {
-        cwd: APP_ROOT,
+        cwd: PANEL_ORIGIN,
         env: process.env,
         timeout: STATUS_COMMAND_TIMEOUT_MS,
       },
@@ -1405,7 +1418,7 @@ async function getLoginItemStatus() {
     return { enabled: false, status: 'disabled', detail };
   }
   if (result.code === 2 && detail === 'stale') {
-    return { enabled: false, status: 'stale', detail: '登录项指向了旧的项目路径，请重新启用。' };
+    return { enabled: false, status: 'stale', detail: '登录项的启动入口或 Node.js 路径已变更，请重新启用。' };
   }
   if (result.code === 3 && detail === 'not-loaded') {
     return { enabled: false, status: 'error', detail: '登录项文件已存在，但 launchd 没有加载它，请重新启用。' };
@@ -1452,7 +1465,26 @@ async function setProjectStartOnPanelLaunch(projectKey, enable) {
       delete projectPreferences[project.key];
     }
   }
-  saveConfig({ ...config, projectPreferences });
+  const ordered = startupProjectKeys(config, projectsCache);
+  if (enable && !startsWithPanel(config, projectKey)) ordered.push(projectKey);
+  const startupOrder = [...new Set([...ordered, ...config.startupOrder])].filter((key) => projectPreferences[key]?.startOnPanelLaunch);
+  saveConfig({ ...config, projectPreferences, startupOrder });
+  await refreshAll();
+  return true;
+}
+
+async function setStartupOrder(keys, previousKeys) {
+  if (!Array.isArray(keys) || !Array.isArray(previousKeys)) throw new Error('启动顺序无效');
+  const config = loadConfig();
+  const current = startupProjectKeys(config, projectsCache);
+  const requested = new Set(keys);
+  if (current.length !== previousKeys.length || current.some((key, index) => key !== previousKeys[index])) {
+    throw new Error('启动列表已变更，请刷新后重试');
+  }
+  if (keys.length !== current.length || requested.size !== current.length || current.some((key) => !requested.has(key))) {
+    throw new Error('启动顺序必须包含每个已启用服务，且不得重复');
+  }
+  saveConfig({ ...config, startupOrder: [...keys, ...config.startupOrder.filter((key) => !requested.has(key))] });
   await refreshAll();
   return true;
 }
@@ -1586,12 +1618,10 @@ async function startProjects(keys) {
 }
 
 async function startConfiguredProjects() {
-  const configuredProjects = projectsCache.filter((project) => (
-    project.startOnPanelLaunch && project.canStartOnPanelLaunch && project.status !== 'running'
-  ));
-
-  for (const project of configuredProjects) {
-    await startProject(project.key);
+  const keys = startupProjectKeys(loadConfig(), projectsCache);
+  if (!keys.length) return;
+  for (const result of await startProjects(keys)) {
+    if (result.outcome === 'failed') console.error(`随面板启动失败（${result.name}）：${result.detail}`);
   }
 }
 
@@ -1726,6 +1756,8 @@ function registerActions() {
     return result;
   });
 
+  registerAction('set-startup-order', setStartupOrder);
+
   registerAction('set-project-start-on-panel-launch', async (projectKey, enable) => {
     return setProjectStartOnPanelLaunch(String(projectKey || ''), Boolean(enable));
   });
@@ -1745,7 +1777,6 @@ async function initialize({ autoStart = true } = {}) {
   loadState();
   registerActions();
   await refreshAll();
-  if (autoStart) await startConfiguredProjects();
   if (gitSync) gitSync.stop();
   gitSync = createGitSync({ statePath: path.join(USER_DATA, 'repository-sync.json'), getProjects: () => [...projectsCache, ...(scanReport.collections || [])] });
   await gitSync.discover();
@@ -1755,6 +1786,7 @@ async function initialize({ autoStart = true } = {}) {
     refreshAll().catch((error) => console.error('状态刷新失败：', error.message));
   }, STATUS_REFRESH_MS);
   statusRefreshTimer.unref();
+  if (autoStart) startConfiguredProjects().catch((error) => console.error('随面板启动失败：', error.message));
 }
 
 module.exports = {

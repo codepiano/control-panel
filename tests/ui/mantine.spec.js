@@ -755,3 +755,66 @@ test("project checks include all child repositories and retain group scope after
   await expect(dialog.locator('[data-repo-key]')).toHaveCount(3);
   await page.screenshot({ path: "/tmp/control-panel-repository-group.png", animations: "disabled" });
 });
+
+test("startup settings add, reorder and remove services with persisted keyboard-accessible controls", async ({ page }) => {
+  const temporary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "panel-startup-ui-")));
+  const names = ["启动测试 API", longName];
+  try {
+    for (const [index, name] of names.entries()) {
+      const directory = path.join(temporary, String(index));
+      fs.mkdirSync(directory);
+      fs.writeFileSync(path.join(directory, "control-panel.json"), JSON.stringify({
+        name, startCommand: "exit 0", statusCommand: "exit 1",
+      }));
+    }
+    fs.writeFileSync(path.join(temporary, "control-panel.json"), JSON.stringify({
+      name: "启动测试集合", kind: "collection", children: names.map((_, index) => ({ path: String(index) })),
+    }));
+    await page.setViewportSize({ width: 1024, height: 820 });
+    await page.goto("/?view=settings");
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("textbox", { name: "扫描入口路径" }).fill(temporary);
+    await dialog.getByRole("button", { name: "添加入口" }).click();
+
+    const select = dialog.getByRole("combobox", { name: "添加自动启动服务" });
+    const add = dialog.getByRole("button", { name: "添加", exact: true });
+    await expect(add).toBeDisabled();
+    for (const name of names) {
+      await select.fill(name.slice(0, 9));
+      await expect(select).toBeFocused();
+      const option = page.getByRole("option", { name, exact: true });
+      await expect(option).toBeVisible();
+      if (name === longName) {
+        await page.screenshot({ path: test.info().outputPath("startup-options.png"), animations: "disabled" });
+      }
+      await option.click();
+      await expect(add).toBeEnabled();
+      await add.click();
+      await expect(add).toBeDisabled();
+    }
+    const list = dialog.getByRole("list", { name: "服务启动顺序" });
+    const rows = list.getByRole("listitem");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first()).toContainText(names[0]);
+    const down = list.getByRole("button", { name: `下移 ${names[0]}` });
+    await expect(down).toBeEnabled();
+    await down.focus();
+    await down.press("Enter");
+    await expect(rows.first()).toContainText(names[1]);
+    await expect(dialog.getByRole("status")).toHaveText(`${names[0]}已移至第 2 位`);
+    await expect(down).toBeFocused();
+    await expect(down).toBeDisabled();
+    await dialog.screenshot({ path: test.info().outputPath("startup-compact.png"), animations: "disabled" });
+
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.reload();
+    await expect(rows.first()).toContainText(names[1]);
+    await expect(rows.last()).toContainText(names[0]);
+    await dialog.screenshot({ path: test.info().outputPath("startup-desktop.png"), animations: "disabled" });
+    await list.getByRole("button", { name: `移除 ${names[1]} 的自动启动` }).click();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText(names[0]);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});

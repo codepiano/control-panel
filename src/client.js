@@ -47,6 +47,7 @@ window.controlPanel = {
   saveProjectPresentation: (key, input) => invoke('save-project-presentation', key, input),
   openProjectFolder: (folder) => invoke('open-project-folder', folder),
   setOpenAtLogin: (enable) => invoke('set-open-at-login', enable),
+  setStartupOrder: (keys, previousKeys) => invoke('set-startup-order', keys, previousKeys),
   setProjectStartOnPanelLaunch: (key, enable) => invoke('set-project-start-on-panel-launch', key, enable),
   resetProjectIcon: (key) => invoke('reset-project-icon', key),
   chooseProjectIcon: (key) => new Promise((resolve, reject) => {

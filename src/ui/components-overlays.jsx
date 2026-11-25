@@ -31,6 +31,7 @@ export {
   ThemeIcon,
   Title,
   Tooltip,
+  VisuallyHidden,
   createTheme,
 } from "@mantine/core";
 

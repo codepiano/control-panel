@@ -5,7 +5,8 @@ LABEL="com.codepiano.control-panel"
 PLIST_FILE="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
-launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+# Disable future logins without terminating a panel started by this job.
+launchctl disable "$DOMAIN/$LABEL"
 rm -f "$PLIST_FILE"
 
 echo "已停用登录时启动。"

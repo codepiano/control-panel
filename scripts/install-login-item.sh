@@ -6,8 +6,13 @@ LABEL="com.codepiano.control-panel"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_FILE="$LAUNCH_AGENTS_DIR/$LABEL.plist"
 TEMP_FILE="$PLIST_FILE.$$.tmp"
-LOG_DIR="$PROJECT_ROOT/.control-panel/logs"
+LOG_DIR="$HOME/Library/Logs/Control Panel"
 DOMAIN="gui/$(id -u)"
+NODE_BIN="${CONTROL_PANEL_NODE:-$(command -v node || true)}"
+if [[ ! -x "$NODE_BIN" ]]; then
+  echo "找不到可执行的 Node.js，请设置 CONTROL_PANEL_NODE。" >&2
+  exit 1
+fi
 
 mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR"
 trap 'rm -f "$TEMP_FILE"' EXIT
@@ -15,20 +20,17 @@ trap 'rm -f "$TEMP_FILE"' EXIT
 plutil -create xml1 "$TEMP_FILE"
 plutil -insert Label -string "$LABEL" "$TEMP_FILE"
 plutil -insert ProgramArguments -array "$TEMP_FILE"
-plutil -insert ProgramArguments.0 -string "/bin/bash" "$TEMP_FILE"
-plutil -insert ProgramArguments.1 -string "$PROJECT_ROOT/scripts/start.sh" "$TEMP_FILE"
-plutil -insert ProgramArguments.2 -string "--hidden" "$TEMP_FILE"
-plutil -insert WorkingDirectory -string "$PROJECT_ROOT" "$TEMP_FILE"
+plutil -insert ProgramArguments.0 -string "$NODE_BIN" "$TEMP_FILE"
+plutil -insert ProgramArguments.1 -string "$PROJECT_ROOT/scripts/login-start.js" "$TEMP_FILE"
 plutil -insert RunAtLoad -bool true "$TEMP_FILE"
 plutil -insert ProcessType -string "Interactive" "$TEMP_FILE"
 plutil -insert StandardOutPath -string "$LOG_DIR/login-item.log" "$TEMP_FILE"
 plutil -insert StandardErrorPath -string "$LOG_DIR/login-item.log" "$TEMP_FILE"
 
 plutil -insert EnvironmentVariables -dictionary "$TEMP_FILE"
-NODE_BIN="${CONTROL_PANEL_NODE:-$(command -v node)}"
 plutil -insert EnvironmentVariables.CONTROL_PANEL_NODE -string "$NODE_BIN" "$TEMP_FILE"
 plutil -insert EnvironmentVariables.PATH -string "$(dirname "$NODE_BIN"):/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" "$TEMP_FILE"
-for setting in CONTROL_PANEL_CONFIG CONTROL_PANEL_DATA CONTROL_PANEL_PORT; do
+for setting in CONTROL_PANEL_CONFIG CONTROL_PANEL_DATA CONTROL_PANEL_PORT PROJECT_RELEASE_STORE; do
   if [[ -n "${!setting:-}" ]]; then
     plutil -insert "EnvironmentVariables.$setting" -string "${!setting}" "$TEMP_FILE"
   fi
@@ -37,8 +39,12 @@ done
 plutil -lint "$TEMP_FILE" >/dev/null
 chmod 600 "$TEMP_FILE"
 
-launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 mv "$TEMP_FILE" "$PLIST_FILE"
-launchctl bootstrap "$DOMAIN" "$PLIST_FILE"
+launchctl enable "$DOMAIN/$LABEL"
+# A loaded login job may own the live panel. Apply the new plist at next login
+# in that case rather than unloading the job and its descendants.
+if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+  launchctl bootstrap "$DOMAIN" "$PLIST_FILE"
+fi
 
 echo "已启用登录时启动：$PLIST_FILE"

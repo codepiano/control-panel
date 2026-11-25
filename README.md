@@ -121,7 +121,9 @@ corepack pnpm run test:ui
 
 `scripts/start.sh`、`stop.sh`、`status.sh` 和 `restart.sh` 均通过版本化生命周期管理发布产物。源码目录无需保留 `dist`；需要构建时会先在独立发布目录完成构建与验证，再启动服务。
 
-macOS 登录启动可在设置中切换，或执行 `./scripts/install-login-item.sh` / `./scripts/uninstall-login-item.sh`。登录项通过上述启动入口启动后端，不自动打开浏览器；移动源码目录或更换 Node 路径后应重新启用登录项。
+在“设置与服务发现 → 开机启动”可启用“登录时启动控制面板”。macOS 登录账户后在后台启动控制面板最后一次成功上线的版本，浏览器无需打开。也可执行 `./scripts/install-login-item.sh` 或 `./scripts/uninstall-login-item.sh`。移动源码目录或更换 Node 路径后应重新启用登录项。
+
+同一区域可添加、移除随面板启动的服务，并用“上移 / 下移”保存顺序。已有“随面板启动”的服务保留原顺序，新加入的服务排在末尾。每次面板后端启动后按顺序执行，已运行的服务会跳过，单项失败会记录并继续；项目提供状态命令时沿用现有启动核验。顺序保存在本机配置的 `startupOrder`，设置保存后在下次启动时生效。
 
 ## 状态刷新
 

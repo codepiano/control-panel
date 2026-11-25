@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory() as tmp:
     m.atomic(m.ACTIVE, dict(artifactId=ids[1], processes=[]))
     m.atomic(m.BUILT, dict(builtRevision=ids[2]))
     m.prepare = lambda: dict(builtRevision=ids[2], artifactId=ids[2])
-    m.signature = lambda pid: None
+    m.signature = lambda pid, stable=True: None
     m.identities = lambda directory: [dict(pid=999999, identity='synthetic')]
     m.legacy = lambda action, directory=m.ROOT, check=True: SimpleNamespace(
         returncode=1 if action == 'status' and directory == m.ROOT else 0,
@@ -54,6 +54,12 @@ with tempfile.TemporaryDirectory() as tmp:
             raise AssertionError('Expected failed activation')
         except RuntimeError:
             pass
+        assert json.loads((m.STORE / 'retention.json').read_text()) == history
+        m.legacy = lambda action, directory=m.ROOT, check=True: SimpleNamespace(
+            returncode=0 if action == 'start' or directory == m.artifact(ids[2]) else 1,
+            stdout=b'', stderr=b'')
+        assert m.start_at_login() == dict(runningRevision=ids[2])
+        assert m.start_at_login() == dict(status='running')
         assert json.loads((m.STORE / 'retention.json').read_text()) == history
 `], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
   assert.equal(result.status, 0, result.stderr);

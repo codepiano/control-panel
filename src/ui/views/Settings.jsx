@@ -14,18 +14,137 @@ import {
   Text,
   TextInput,
   Title,
+  VisuallyHidden,
 } from "../components-overlays.jsx";
 import model from "../model.cjs";
 const {
   formatTimestamp: timestamp,
-  splitFrontendUrl,
-  repositoryNeedsAttention: needsAttention,
-  repositoryCanSync: canSync,
-  repositoryStatusText: repoText,
-  repositoryActionGuidance: repoGuidance,
-  repositoryResults,
 } = model;
 const api = window.controlPanel;
+
+function StartupSettings({ data, run, busy }) {
+  const [selection, setSelection] = useState(null);
+  const [announcement, setAnnouncement] = useState("");
+  const keys = data?.startupProjectKeys || [];
+  const projects = data?.projects || [];
+  const byKey = new Map(projects.map((project) => [project.key, project]));
+  const available = projects
+    .filter((project) => project.canStartOnPanelLaunch && !project.startOnPanelLaunch)
+    .map((project) => ({ value: project.key, label: project.name }));
+  const selected = available.some((option) => option.value === selection) ? selection : null;
+  const saving = busy.has("startup");
+
+  const move = async (event, index, offset) => {
+    const target = index + offset;
+    if (saving || target < 0 || target >= keys.length) return;
+    const button = event.currentTarget;
+    const next = [...keys];
+    [next[index], next[target]] = [next[target], next[index]];
+    if (await run("startup", () => api.setStartupOrder(next, keys))) {
+      setAnnouncement(`${byKey.get(keys[index]).name}已移至第 ${target + 1} 位`);
+      requestAnimationFrame(() => {
+        if (button.isConnected && document.activeElement === document.body) button.focus();
+      });
+    }
+  };
+
+  return (
+    <Paper withBorder p="md">
+      <Stack gap="sm">
+        <Title order={4} size="sm">
+          开机启动
+        </Title>
+        <Switch
+          label="登录时启动控制面板"
+          description={data?.loginItemStatus?.status === "error" || data?.loginItemStatus?.status === "stale"
+            ? data.loginItemStatus.detail
+            : "登录 macOS 后在后台启动控制面板。"}
+          checked={Boolean(data?.openAtLogin)}
+          disabled={!data || busy.has("login")}
+          onChange={(e) =>
+            run("login", () => api.setOpenAtLogin(e.currentTarget.checked))
+          }
+        />
+        <Title order={5} size="sm">
+          服务启动顺序
+        </Title>
+        <Text size="xs" c="dimmed">
+          控制面板每次启动时从上到下启动服务。已运行的服务会跳过，单项失败时继续下一项。
+        </Text>
+        {keys.length > 0 ? (
+          <Stack component="ol" aria-label="服务启动顺序" gap="xs" m={0} pl="lg">
+            {keys.map((key, index) => {
+              const { name } = byKey.get(key);
+              return (
+                <Box component="li" key={key}>
+                  <Group wrap="nowrap" justify="space-between" gap="xs">
+                    <Text size="sm" className="break-text" miw={0}>{name}</Text>
+                    <Group gap={4} wrap="nowrap">
+                      {[-1, 1].map((offset) => {
+                        const label = offset < 0 ? "上移" : "下移";
+                        const disabled = saving || index + offset < 0 || index + offset >= keys.length;
+                        return (
+                          <Button
+                            key={offset}
+                            size="compact-xs"
+                            variant="default"
+                            aria-label={`${label} ${name}`}
+                            aria-disabled={disabled}
+                            data-disabled={disabled || undefined}
+                            onClick={(event) => move(event, index, offset)}
+                          >
+                            {label}
+                          </Button>
+                        );
+                      })}
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        color="red"
+                        aria-label={`移除 ${name} 的自动启动`}
+                        disabled={saving}
+                        onClick={() => run("startup", () => api.setProjectStartOnPanelLaunch(key, false))}
+                      >
+                        移除
+                      </Button>
+                    </Group>
+                  </Group>
+                </Box>
+              );
+            })}
+          </Stack>
+        ) : (
+          <Text size="xs" c="dimmed">还没有设为自动启动的服务。</Text>
+        )}
+        <Group align="end" wrap="nowrap" gap="xs">
+          <Select
+            label="添加自动启动服务"
+            placeholder={available.length ? "选择服务" : "没有可添加的服务"}
+            data={available}
+            searchable
+            nothingFoundMessage="找不到匹配的服务"
+            value={selected}
+            onChange={setSelection}
+            disabled={!available.length || saving}
+            style={{ flex: 1, minWidth: 0 }}
+          />
+          <Button
+            disabled={!selected || saving}
+            onClick={async () => {
+              if (await run("startup", () => api.setProjectStartOnPanelLaunch(selected, true))) {
+                setSelection(null);
+              }
+            }}
+          >
+            添加
+          </Button>
+        </Group>
+        <VisuallyHidden role="status">{announcement}</VisuallyHidden>
+      </Stack>
+    </Paper>
+  );
+}
+
 export default function Settings({ opened, close, data, run: perform, busy }) {
   const [error, setError] = useState("");
   useEffect(() => {
@@ -57,9 +176,7 @@ export default function Settings({ opened, close, data, run: perform, busy }) {
             {error}
           </Alert>
         )}
-        <Text size="sm" c="dimmed">
-          声明服务入口，由本机后端读取配置与子项目关系。
-        </Text>
+        <StartupSettings data={data} run={run} busy={busy} />
         <Paper withBorder p="md">
           <Title order={4} size="sm" mb="xs">
             扫描入口
@@ -139,22 +256,6 @@ export default function Settings({ opened, close, data, run: perform, busy }) {
               </Text>
             )}
           </Stack>
-        </Paper>
-        <Paper withBorder p="md">
-          <Switch
-            label="登录时启动后端"
-            description={
-              data?.loginItemStatus?.detail ||
-              (data?.openAtLogin
-                ? "已启用：登录后启动本机后端服务"
-                : "未启用：登录后不自动启动后端")
-            }
-            checked={Boolean(data?.openAtLogin)}
-            disabled={busy.has("login")}
-            onChange={(e) =>
-              run("login", () => api.setOpenAtLogin(e.currentTarget.checked))
-            }
-          />
         </Paper>
         <Accordion variant="contained">
           <Accordion.Item value="info">

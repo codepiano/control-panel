@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="com.codepiano.control-panel"
 PLIST_FILE="$HOME/Library/LaunchAgents/$LABEL.plist"
-EXPECTED_SCRIPT="$PROJECT_ROOT/scripts/start.sh"
+EXPECTED_SCRIPT="$PROJECT_ROOT/scripts/login-start.js"
 DOMAIN="gui/$(id -u)"
 
 if [[ ! -f "$PLIST_FILE" ]]; then
@@ -13,9 +13,9 @@ if [[ ! -f "$PLIST_FILE" ]]; then
 fi
 
 CONFIGURED_SCRIPT="$(plutil -extract ProgramArguments.1 raw -o - "$PLIST_FILE" 2>/dev/null || true)"
-CONFIGURED_HIDDEN="$(plutil -extract ProgramArguments.2 raw -o - "$PLIST_FILE" 2>/dev/null || true)"
+CONFIGURED_NODE="$(plutil -extract ProgramArguments.0 raw -o - "$PLIST_FILE" 2>/dev/null || true)"
 
-if [[ "$CONFIGURED_SCRIPT" != "$EXPECTED_SCRIPT" || "$CONFIGURED_HIDDEN" != "--hidden" ]]; then
+if [[ "$CONFIGURED_SCRIPT" != "$EXPECTED_SCRIPT" || ! -x "$CONFIGURED_NODE" ]]; then
   echo "stale"
   exit 2
 fi

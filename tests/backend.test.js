@@ -470,3 +470,51 @@ test('default stop budget allows graceful shutdown beyond the status probe deadl
   const project = (await core.invoke('get-dashboard-data')).projects.find(p => p.key === key);
   assert.equal(project.status, 'running');
 });
+
+test('saved startup order runs in the background and continues after a launch error', async () => {
+  const workspace = path.join(temporary, 'startup-workspace');
+  const events = path.join(workspace, 'events');
+  const first = writeManifest(path.join(workspace, 'first'), {
+    name: 'A first', startCommand: 'sleep 1; printf "first\\n" >> "../events"; touch ready',
+    statusCommand: 'test -f ready',
+  });
+  const broken = writeManifest(path.join(workspace, 'broken'), {
+    name: 'B broken', startCommand: 'printf "broken\\n" >> "../events"; exit 4', statusCommand: 'exit 1',
+  });
+  const last = writeManifest(path.join(workspace, 'last'), {
+    name: 'C last', startCommand: 'test -f ../first/ready && printf "last\\n" >> "../events" && touch ready',
+    statusCommand: 'test -f ready',
+  });
+  const ready = writeManifest(path.join(workspace, 'ready'), {
+    name: 'D already running', startCommand: 'printf "unexpected\\n" >> "../events"', statusCommand: 'exit 0',
+  });
+  fs.writeFileSync(process.env.CONTROL_PANEL_CONFIG, JSON.stringify({
+    roots: [workspace],
+    projectPreferences: Object.fromEntries([first, broken, ready].map((key) => [key, { startOnPanelLaunch: true }])),
+  }));
+  await core.invoke('refresh-projects');
+  const order = async () => (await core.invoke('get-dashboard-data')).startupProjectKeys;
+  assert.deepEqual(await order(), [first, broken, ready]);
+  await core.invoke('set-project-start-on-panel-launch', [last, true]);
+  const previous = [first, broken, ready, last];
+  assert.deepEqual(await order(), previous);
+  await assert.rejects(core.invoke('set-startup-order', [[first, broken, ready, ready], previous]), /不得重复/);
+  const next = [ready, broken, first, last];
+  await core.invoke('set-startup-order', [next, previous]);
+  await assert.rejects(core.invoke('set-startup-order', [previous, previous]), /列表已变更/);
+  await core.invoke('set-project-start-on-panel-launch', [ready, false]);
+  assert.deepEqual(await order(), [broken, first, last]);
+  await core.invoke('set-project-start-on-panel-launch', [ready, true]);
+  assert.deepEqual(await order(), [broken, first, last, ready]);
+  assert.equal(fs.existsSync(events), false, 'changing settings must not start services immediately');
+
+  await core.initialize();
+  assert.equal(fs.existsSync(path.join(workspace, 'last', 'ready')), false, 'panel must be ready before the queue finishes');
+  const deadline = Date.now() + 10000;
+  while ((await core.invoke('get-dashboard-data')).projects.find((project) => project.key === last).status !== 'running') {
+    assert.ok(Date.now() < deadline, 'startup queue did not finish');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(fs.readFileSync(events, 'utf8'), 'broken\nfirst\nlast\n');
+  assert.deepEqual(await order(), [broken, first, last, ready]);
+});
